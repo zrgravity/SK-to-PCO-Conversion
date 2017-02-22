@@ -19,7 +19,7 @@ replaceDict = {
     'Employer': '',
     'Gender': 'Gender',
     'Include in Directory': 'Include in Directory',
-    'Individual ID': 'remote_id',
+    'Individual ID': '',
     'Marital Status': 'Marital Status',
     'Member Status': 'Membership',
     'Occupation': '',
