@@ -42,6 +42,7 @@ export interface PcoPersonAttributes {
   birthdate: string | null;         // YYYY-MM-DD
   anniversary: string | null;       // YYYY-MM-DD
   membership: string | null;
+  marital_status: string | null;
   status: string;
   remote_id: number | null;
   created_at: string;

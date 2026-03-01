@@ -54,6 +54,7 @@ function makePco(overrides: Partial<PcoPersonRow> = {}): PcoPersonRow {
     birthdate: "1975-05-15",
     anniversary: "2000-06-20",
     membership: "Member",
+    marital_status: "Married",
     status: "active",
     raw_data: "{}",
     synced_at: new Date().toISOString(),
@@ -88,12 +89,12 @@ describe("diffPersonFields", () => {
     expect(changes.find(c => c.field_name === "membership")).toBeUndefined();
   });
 
-  it("includes middle_name and nickname diffs", () => {
-    const sk = makeSk(); // has middle_name: "Robert", preferred_name: "Johnny"
-    const pco = makePco(); // has both null
+  it("includes middle_name and marital_status diffs", () => {
+    const sk = makeSk(); // has middle_name: "Robert", marital_status: "Married"
+    const pco = makePco({ middle_name: null, marital_status: null }); // PCO has both null
     const changes = diffPersonFields(sk, pco);
     expect(changes.some(c => c.field_name === "middle_name")).toBe(true);
-    expect(changes.some(c => c.field_name === "nickname")).toBe(true);
+    expect(changes.some(c => c.field_name === "marital_status")).toBe(true);
   });
 });
 

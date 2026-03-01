@@ -50,19 +50,20 @@ CREATE INDEX IF NOT EXISTS idx_sk_people_sk_id    ON sk_people(sk_individual_id)
 
 -- ── PCO people snapshot ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS pco_people (
-  pco_id       TEXT    PRIMARY KEY,
-  remote_id    INTEGER,                       -- maps to SK individual_id
-  first_name   TEXT,
-  last_name    TEXT,
-  middle_name  TEXT,
-  nickname     TEXT,
-  gender       TEXT,
-  birthdate    TEXT,
-  anniversary  TEXT,
-  membership   TEXT,
-  status       TEXT,
-  raw_data     TEXT    NOT NULL,              -- full JSON from PCO API
-  synced_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+  pco_id         TEXT    PRIMARY KEY,
+  remote_id      INTEGER,                       -- maps to SK individual_id
+  first_name     TEXT,
+  last_name      TEXT,
+  middle_name    TEXT,
+  nickname       TEXT,
+  gender         TEXT,
+  birthdate      TEXT,
+  anniversary    TEXT,
+  membership     TEXT,
+  marital_status TEXT,
+  status         TEXT,
+  raw_data       TEXT    NOT NULL,              -- full JSON from PCO API
+  synced_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_pco_people_remote_id ON pco_people(remote_id);

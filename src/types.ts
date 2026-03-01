@@ -61,6 +61,7 @@ export interface PcoPersonRow {
   birthdate: string | null;
   anniversary: string | null;
   membership: string | null;
+  marital_status: string | null;
   status: string | null;
   raw_data: string;
   synced_at: string;

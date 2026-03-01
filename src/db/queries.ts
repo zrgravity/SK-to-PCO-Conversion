@@ -133,21 +133,22 @@ export async function upsertPcoPerson(
     .prepare(
       `INSERT INTO pco_people
          (pco_id, remote_id, first_name, last_name, middle_name, nickname,
-          gender, birthdate, anniversary, membership, status, raw_data, synced_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          gender, birthdate, anniversary, membership, marital_status, status, raw_data, synced_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
        ON CONFLICT(pco_id) DO UPDATE SET
-         remote_id   = excluded.remote_id,
-         first_name  = excluded.first_name,
-         last_name   = excluded.last_name,
-         middle_name = excluded.middle_name,
-         nickname    = excluded.nickname,
-         gender      = excluded.gender,
-         birthdate   = excluded.birthdate,
-         anniversary = excluded.anniversary,
-         membership  = excluded.membership,
-         status      = excluded.status,
-         raw_data    = excluded.raw_data,
-         synced_at   = CURRENT_TIMESTAMP`,
+         remote_id      = excluded.remote_id,
+         first_name     = excluded.first_name,
+         last_name      = excluded.last_name,
+         middle_name    = excluded.middle_name,
+         nickname       = excluded.nickname,
+         gender         = excluded.gender,
+         birthdate      = excluded.birthdate,
+         anniversary    = excluded.anniversary,
+         membership     = excluded.membership,
+         marital_status = excluded.marital_status,
+         status         = excluded.status,
+         raw_data       = excluded.raw_data,
+         synced_at      = CURRENT_TIMESTAMP`,
     )
     .bind(
       row.pco_id,
@@ -160,6 +161,7 @@ export async function upsertPcoPerson(
       row.birthdate,
       row.anniversary,
       row.membership,
+      row.marital_status,
       row.status,
       row.raw_data,
     )

@@ -44,6 +44,7 @@ syncRoute.post("/", async (c) => {
         birthdate: attrs.birthdate ?? null,
         anniversary: attrs.anniversary ?? null,
         membership: attrs.membership ?? null,
+        marital_status: attrs.marital_status ?? null,
         status: attrs.status ?? null,
         raw_data: JSON.stringify(person),
       });

@@ -48,14 +48,14 @@ export function diffPersonFields(
     skVal: string | null;
     pcoVal: string | null;
   }> = [
-    { field: "first_name",  skVal: sk.first_name,    pcoVal: pco.first_name },
-    { field: "last_name",   skVal: sk.last_name,     pcoVal: pco.last_name },
-    { field: "middle_name", skVal: sk.middle_name,   pcoVal: pco.middle_name },
-    { field: "nickname",    skVal: sk.preferred_name, pcoVal: pco.nickname },
-    { field: "gender",      skVal: sk.gender,         pcoVal: pco.gender },
-    { field: "birthdate",   skVal: sk.birthdate,      pcoVal: pco.birthdate },
-    { field: "anniversary", skVal: sk.anniversary,    pcoVal: pco.anniversary },
-    { field: "membership",  skVal: sk.membership,     pcoVal: pco.membership },
+    { field: "first_name",     skVal: sk.first_name,      pcoVal: pco.first_name },
+    { field: "last_name",      skVal: sk.last_name,       pcoVal: pco.last_name },
+    { field: "middle_name",    skVal: sk.middle_name,     pcoVal: pco.middle_name },
+    { field: "gender",         skVal: sk.gender,           pcoVal: pco.gender },
+    { field: "birthdate",      skVal: sk.birthdate,        pcoVal: pco.birthdate },
+    { field: "anniversary",    skVal: sk.anniversary,      pcoVal: pco.anniversary },
+    { field: "membership",     skVal: sk.membership,       pcoVal: pco.membership },
+    { field: "marital_status", skVal: sk.marital_status,   pcoVal: pco.marital_status },
   ];
 
   for (const { field, skVal, pcoVal } of fields) {
