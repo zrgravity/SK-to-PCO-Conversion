@@ -1,0 +1,6 @@
+"Individual ID","Family ID","Family Name","First Name","Last Name","Middle Name","Preferred Name","Gender","Birth Date","Wedding Date","Member Status","Marital Status","Home Phone","Cell Phone","Work Phone","E-Mail","Email 2","Address","City","State","Zip Code","Baptized","Baptized Date","Include in Directory"
+"1001","2001","Smith Family","John","Smith","Robert","Johnny","Male","05/15/1975","06/20/2000","Member","Married","555-555-1234","555-555-9876","","john.smith@example.com","john.smith@work.com","123 Main St","Springfield","IL","62701","Yes","03/12/2001","Y"
+"1002","2001","Smith Family","Jane","Smith","Marie","","Female","09/22/1978","06/20/2000","Member","Married","555-555-1234","555-555-4321","","jane.smith@example.com","","123 Main St","Springfield","IL","62701","","  /  /    ","Y"
+"1003","2002","Johnson Family","Robert","Johnson","","Bob","Male","11/03/1965","","Regular Attender","Single","555-555-2222","555-555-3333","555-555-4444","bob.johnson@example.com","","456 Oak Ave","Springfield","IL","62702","","  /  /    ","Y"
+"1004","2003","Williams Family","Mary","Williams","Louise","","Female","02/14/1990","","","Single","","555-555-7777","","mary.williams@example.com","","789 Pine Rd","Springfield","IL","62703","","  /  /    ","N"
+"1005","","","","Incomplete Row","","","","  /  /    ","  /  /    ","","","","","","","","","","","","","  /  /    ",""
