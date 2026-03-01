@@ -9,7 +9,7 @@ assets = { directory = "public" }
 [[d1_databases]]
 binding = "DB"
 database_name = "sk-pco-db"
-database_id = "YOUR_D1_DATABASE_ID"   # replace after: wrangler d1 create sk-pco-db
+database_id = "c6860a34-f3cd-4bcf-8076-1373b723b1b2"
 
 [vars]
 # PCO_APP_ID and PCO_APP_SECRET are set as secrets via:
@@ -20,6 +20,10 @@ database_id = "YOUR_D1_DATABASE_ID"   # replace after: wrangler d1 create sk-pco
 # Cloudflare Access audience tag for verifying CF-Access-Jwt-Assertion
 # Set via: wrangler secret put CF_ACCESS_AUD
 # Leave empty to skip JWT verification in local dev.
+
+[[routes]]
+pattern = "sk-pco.giedesignweb.com"
+custom_domain = true
 
 [dev]
 port = 8787
