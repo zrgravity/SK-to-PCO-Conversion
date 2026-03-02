@@ -101,7 +101,7 @@ export class PcoClient {
       addressMap.set(person.id, relIds("addresses").flatMap((id) => {
         const r = includedById.get(id);
         if (!r || r.type !== "Address") return [];
-        return [{ street: r.attributes.street as string | null, city: r.attributes.city as string | null, state: r.attributes.state as string | null, zip: r.attributes.zip as string | null, location: String(r.attributes.location ?? "Home") }];
+        return [{ street: (r.attributes.street as string | undefined) ?? null, city: (r.attributes.city as string | undefined) ?? null, state: (r.attributes.state as string | undefined) ?? null, zip: (r.attributes.zip as string | undefined) ?? null, location: String(r.attributes.location ?? "Home") }];
       }));
     }
 
