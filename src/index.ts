@@ -68,27 +68,6 @@ app.get("/api/health", (c) => {
   });
 });
 
-// ── TEMP: full database wipe ─────────────────────────────────────────────────
-// Remove this route after the one-time reset is done.
-app.post("/api/admin/reset-db", async (c) => {
-  if (c.req.query("confirm") !== "yes") {
-    return c.json({ ok: false, error: "Pass ?confirm=yes to proceed" }, 400);
-  }
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM pending_changes"),
-    c.env.DB.prepare("DELETE FROM person_matches"),
-    c.env.DB.prepare("DELETE FROM pco_household_members"),
-    c.env.DB.prepare("DELETE FROM pco_households"),
-    c.env.DB.prepare("DELETE FROM pco_addresses"),
-    c.env.DB.prepare("DELETE FROM pco_phone_numbers"),
-    c.env.DB.prepare("DELETE FROM pco_emails"),
-    c.env.DB.prepare("DELETE FROM pco_people"),
-    c.env.DB.prepare("DELETE FROM sk_people"),
-    c.env.DB.prepare("DELETE FROM import_batches"),
-  ]);
-  return c.json({ ok: true, message: "All tables cleared." });
-});
-
 // ── 404 for unmatched API calls ─────────────────────────────────────────────
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) {
