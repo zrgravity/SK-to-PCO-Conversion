@@ -655,6 +655,30 @@ export async function getApprovedChanges(
   return result.results;
 }
 
+/**
+ * Fetch a page of approved changes for paginated apply.
+ * Returns the slice and whether more pages remain.
+ */
+export async function getApprovedChangesPage(
+  db: D1Database,
+  batchId: string,
+  limit: number,
+  offset: number,
+): Promise<{ rows: PendingChangeRow[]; hasMore: boolean }> {
+  // Fetch one extra to know whether there is a next page
+  const result = await db
+    .prepare(
+      `SELECT * FROM pending_changes
+       WHERE import_batch_id = ? AND status = 'approved'
+       ORDER BY id
+       LIMIT ? OFFSET ?`,
+    )
+    .bind(batchId, limit + 1, offset)
+    .all<PendingChangeRow>();
+  const hasMore = result.results.length > limit;
+  return { rows: result.results.slice(0, limit), hasMore };
+}
+
 export async function countChanges(
   db: D1Database,
   batchId: string,

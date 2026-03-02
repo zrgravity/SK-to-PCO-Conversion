@@ -371,7 +371,27 @@ export class PcoApiError extends Error {
     public readonly statusCode: number,
     public readonly body: string,
   ) {
-    super(`PCO API error ${statusCode}: ${body}`);
+    // Try to extract a human-readable detail from PCO's JSON error envelope:
+    // { "errors": [{ "title": "...", "detail": "...", "status": "422" }] }
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body) as { errors?: Array<{ detail?: string; title?: string }> };
+      const first = parsed.errors?.[0];
+      detail = first?.detail ?? first?.title ?? body;
+    } catch {
+      // body wasn't JSON — use as-is
+    }
+
+    const friendlyStatus: Record<number, string> = {
+      404: "PCO record not found (deleted since last sync?)",
+      409: "Conflict — record may already exist",
+      422: `Validation error: ${detail}`,
+      429: "PCO rate limit — too many requests",
+      500: "PCO server error",
+      502: "PCO gateway error",
+    };
+
+    super(`PCO API ${statusCode}: ${friendlyStatus[statusCode] ?? detail}`);
     this.name = "PcoApiError";
   }
 }

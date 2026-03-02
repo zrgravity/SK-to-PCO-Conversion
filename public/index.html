@@ -321,6 +321,7 @@
             <button class="filter-tab" :class="{active:changeFilter==='pending'}"   @click="changeFilter='pending';loadChanges()">Pending</button>
             <button class="filter-tab" :class="{active:changeFilter==='approved'}"  @click="changeFilter='approved';loadChanges()">Approved</button>
             <button class="filter-tab" :class="{active:changeFilter==='rejected'}"  @click="changeFilter='rejected';loadChanges()">Rejected</button>
+            <button class="filter-tab" :class="{active:changeFilter==='failed'}"    @click="changeFilter='failed';loadChanges()">Failed</button>
           </div>
           <div class="filter-tabs" style="margin-bottom:0">
             <button class="filter-tab" :class="{active:typeFilter==='all'}"     @click="typeFilter='all'">All Types</button>
@@ -426,10 +427,12 @@
           <span x-show="loading" class="spinner"></span>
           Apply to Planning Center
         </button>
+        <p x-show="applyProgress" style="margin-top:0.75rem;font-size:0.875rem;color:var(--text-muted)" x-text="applyProgress"></p>
         <template x-if="applyResult">
-          <div class="alert alert-ok" style="margin-top:1rem">
+          <div :class="applyResult.failed > 0 ? 'alert alert-error' : 'alert alert-ok'" style="margin-top:1rem">
             Applied: <strong x-text="applyResult.applied"></strong> &nbsp;|&nbsp;
             Failed: <strong x-text="applyResult.failed"></strong>
+            <span x-show="applyResult.failed > 0"> — go to step 4, filter by <em>Failed</em> to see errors</span>
           </div>
         </template>
       </div>
@@ -457,6 +460,7 @@
       changeFilter: 'pending',
       typeFilter: 'all',
       applyResult: null,
+      applyProgress: '',
 
       get visibleChanges() {
         const CONTACT = ['add_phone','update_phone','add_email','update_email','add_address','update_address'];
@@ -711,12 +715,39 @@
       async applyChanges() {
         if (!this.batchId) return;
         if (!confirm('Apply all approved changes to Planning Center Online? This cannot be undone.')) return;
+        this.loading = true;
+        this.applyProgress = 'starting…';
+        this.applyResult = null;
+        let totalApplied = 0;
+        let totalFailed  = 0;
+        let offset = 0;
         try {
-          const data = await this.api('POST', `/apply/${this.batchId}`);
-          this.applyResult = data;
-          this.msg(`Applied ${data.applied} changes (failed: ${data.failed})`, data.failed>0?'error':'ok');
+          while (true) {
+            const res = await fetch(`/api/apply/${this.batchId}?offset=${offset}&limit=20`, { method: 'POST' });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Server error');
+            const d = json.data;
+            totalApplied += d.applied;
+            totalFailed  += d.failed;
+            this.applyProgress = `${totalApplied} applied, ${totalFailed} failed…`;
+            if (d.done) {
+              this.applyResult = { applied: totalApplied, failed: totalFailed };
+              break;
+            }
+            offset = d.nextOffset;
+          }
+          this.msg(
+            `Applied ${totalApplied} changes${totalFailed ? ` — ${totalFailed} failed (see Failed filter)` : ''}`,
+            totalFailed > 0 ? 'error' : 'ok'
+          );
           await this.loadChanges();
-        } catch(e) { this.msg(e.message, 'error'); }
+        } catch(e) {
+          this.applyResult = { applied: totalApplied, failed: totalFailed };
+          this.msg(e.message, 'error');
+        } finally {
+          this.loading = false;
+          this.applyProgress = '';
+        }
       },
 
       changeTypeLabel(type) {
