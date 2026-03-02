@@ -12,6 +12,7 @@ import {
   getAllPersonMatches,
   getPersonMatch,
   upsertPersonMatch,
+  batchUpsertPersonMatches,
 } from "../db/queries";
 import type { Env } from "../types";
 
@@ -54,6 +55,29 @@ matchesRoute.post("/", async (c) => {
       confidence: "manual",
     },
   });
+});
+
+/** Bulk confirm matches: [{ sk_individual_id, pco_person_id }] */
+matchesRoute.post("/bulk", async (c) => {
+  const userEmail = c.req.header("CF-Access-Authenticated-User-Email") ?? null;
+  const body = await c.req.json<{ matches: Array<{ sk_individual_id: string; pco_person_id: string }> }>();
+
+  if (!Array.isArray(body.matches) || body.matches.length === 0) {
+    return c.json({ ok: false, error: "matches array is required" }, 400);
+  }
+
+  await batchUpsertPersonMatches(
+    c.env.DB,
+    body.matches.map((m) => ({
+      skId: m.sk_individual_id,
+      pcoId: m.pco_person_id,
+      confidence: "manual" as const,
+      userConfirmed: true,
+      confirmedBy: userEmail,
+    })),
+  );
+
+  return c.json({ ok: true, data: { confirmed: body.matches.length } });
 });
 
 /** Remove a match */

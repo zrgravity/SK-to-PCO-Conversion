@@ -122,20 +122,23 @@ export class PersonMatcher {
     }
 
     const best = scored[0];
-
-    // Strong match (score ≥ 80, uniquely top)
     const secondBest = scored[1];
-    if (
-      best.score >= 80 &&
-      (!secondBest || best.score - secondBest.score >= 20)
-    ) {
-      const confidence =
-        best.score >= 80 && best.pco.remote_id !== null
-          ? "remote_id"
-          : best.score >= 80
-          ? "name_dob"
-          : "name_email";
+    const gap = secondBest ? best.score - secondBest.score : best.score;
+
+    // Rule 1: Strong match — name + DOB (score ≥ 80, clear leader by ≥ 20 pts)
+    if (best.score >= 80 && gap >= 20) {
+      const confidence = best.pco.remote_id !== null ? "remote_id" : "name_dob";
       return { kind: "strong", pco_id: best.pco.pco_id, confidence, score: best.score };
+    }
+
+    // Rule 2: Name + email (score ≥ 65, leader by ≥ 10 pts) — email is strong corroboration
+    if (best.score >= 65 && gap >= 10) {
+      return { kind: "strong", pco_id: best.pco.pco_id, confidence: "name_email", score: best.score };
+    }
+
+    // Rule 3: Single unambiguous name match (only candidate, full name matched → score ≥ 55)
+    if (scored.length === 1 && best.score >= 55) {
+      return { kind: "strong", pco_id: best.pco.pco_id, confidence: "name_only", score: best.score };
     }
 
     // Ambiguous — needs user input

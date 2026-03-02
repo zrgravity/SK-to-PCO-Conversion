@@ -252,9 +252,14 @@
         <!-- Unresolved matches -->
         <template x-if="unresolvedMatches.length > 0">
           <div style="margin-top:1.5rem">
-            <div class="alert alert-info">
-              <strong x-text="unresolvedMatches.length"></strong> records could not be automatically matched.
-              Please resolve them below before reviewing changes.
+            <div class="alert alert-info" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+              <span><strong x-text="unresolvedMatches.length"></strong> records could not be automatically matched.
+              Please resolve them below before reviewing changes.</span>
+              <button class="btn btn-primary btn-sm" :disabled="loading" @click="acceptAllMatches()"
+                title="Accept the top-scored PCO candidate for every unresolved SK record">
+                <span x-show="loading" class="spinner"></span>
+                Accept All Suggestions
+              </button>
             </div>
             <template x-for="u in unresolvedMatches" :key="u.sk_individual_id">
               <div class="match-card">
@@ -565,6 +570,34 @@
         } finally {
           this.loading = false;
           this.diffProgress = '';
+        }
+      },
+
+      async acceptAllMatches() {
+        // Bulk-confirm the top-scored candidate for every unresolved item that has at least one candidate.
+        const toConfirm = this.unresolvedMatches
+          .filter(u => u.candidates.length > 0)
+          .map(u => ({ sk_individual_id: u.sk_individual_id, pco_person_id: u.candidates[0].pco_id }));
+        if (toConfirm.length === 0) {
+          this.msg('No candidates to accept', 'info', 3000);
+          return;
+        }
+        this.loading = true;
+        try {
+          const res = await fetch('/api/matches/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ matches: toConfirm }),
+          });
+          const json = await res.json();
+          if (!json.ok) throw new Error(json.error ?? 'Server error');
+          this.msg(`✓ Confirmed ${json.data.confirmed} matches — re-computing diff…`, 'ok');
+          this.unresolvedMatches = [];
+          await this.computeDiff();
+        } catch(e) {
+          this.msg(e.message, 'error');
+        } finally {
+          this.loading = false;
         }
       },
 
