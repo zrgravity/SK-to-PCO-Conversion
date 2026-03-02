@@ -594,6 +594,28 @@ export async function bulkRejectChanges(
     .run();
 }
 
+/**
+ * Bulk-reject all pending update_field changes in a batch for a specific field.
+ * Used by the "Quick Reject" buttons in the Review UI (e.g. reject all marital_status noise).
+ */
+export async function bulkRejectByField(
+  db: D1Database,
+  batchId: string,
+  fieldName: string,
+  reviewedBy: string | null,
+): Promise<number> {
+  const result = await db
+    .prepare(
+      `UPDATE pending_changes
+       SET status = 'rejected', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+       WHERE import_batch_id = ? AND status = 'pending'
+         AND change_type = 'update_field' AND field_name = ?`,
+    )
+    .bind(reviewedBy, batchId, fieldName)
+    .run();
+  return (result.meta as { changes?: number }).changes ?? 0;
+}
+
 export async function getApprovedChanges(
   db: D1Database,
   batchId: string,

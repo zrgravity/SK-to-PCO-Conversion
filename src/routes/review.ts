@@ -13,6 +13,7 @@ import {
   updateChangeStatus,
   bulkApproveChanges,
   bulkRejectChanges,
+  bulkRejectByField,
   getBatch,
 } from "../db/queries";
 import type { Env } from "../types";
@@ -83,4 +84,14 @@ reviewRoute.post("/batch/:batchId/reject-all", async (c) => {
   if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
   await bulkRejectChanges(c.env.DB, batchId, getUserEmail(c));
   return c.json({ ok: true, data: { batch_id: batchId, action: "reject-all" } });
+});
+
+/** Bulk-reject all pending update_field changes for a specific field (e.g. marital_status) */
+reviewRoute.post("/batch/:batchId/reject-field/:fieldName", async (c) => {
+  const batchId = c.req.param("batchId");
+  const fieldName = c.req.param("fieldName");
+  const batch = await getBatch(c.env.DB, batchId);
+  if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
+  const rejected = await bulkRejectByField(c.env.DB, batchId, fieldName, getUserEmail(c));
+  return c.json({ ok: true, data: { batch_id: batchId, field: fieldName, rejected } });
 });

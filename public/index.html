@@ -322,10 +322,24 @@
             <button class="filter-tab" :class="{active:changeFilter==='approved'}"  @click="changeFilter='approved';loadChanges()">Approved</button>
             <button class="filter-tab" :class="{active:changeFilter==='rejected'}"  @click="changeFilter='rejected';loadChanges()">Rejected</button>
           </div>
+          <div class="filter-tabs" style="margin-bottom:0">
+            <button class="filter-tab" :class="{active:typeFilter==='all'}"     @click="typeFilter='all'">All Types</button>
+            <button class="filter-tab" :class="{active:typeFilter==='contact'}" @click="typeFilter='contact'">📞 Contact</button>
+            <button class="filter-tab" :class="{active:typeFilter==='new'}"     @click="typeFilter='new'">✨ New People</button>
+            <button class="filter-tab" :class="{active:typeFilter==='field'}"   @click="typeFilter='field'">📋 Fields</button>
+          </div>
           <div class="toolbar-right">
             <button class="btn btn-success btn-sm" :disabled="loading" @click="bulkAction('approve-all')">✓ Approve All Pending</button>
             <button class="btn btn-danger btn-sm"  :disabled="loading" @click="bulkAction('reject-all')">✕ Reject All Pending</button>
           </div>
+        </div>
+        <div class="toolbar" style="margin-top:-0.25rem;margin-bottom:0.75rem">
+          <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap">Quick Reject:</span>
+          <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('marital_status')">✕ marital_status</button>
+          <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('membership')">✕ membership</button>
+          <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('anniversary')">✕ anniversary</button>
+          <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('birthdate')">✕ birthdate</button>
+          <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('gender')">✕ gender</button>
         </div>
 
         <template x-if="changes.length === 0">
@@ -346,7 +360,7 @@
               </tr>
             </thead>
             <tbody>
-              <template x-for="ch in changes" :key="ch.id">
+              <template x-for="ch in visibleChanges" :key="ch.id">
                 <tr>
                   <td>
                     <span class="badge"
@@ -436,7 +450,16 @@
       changes: [],
       changeCounts: {},
       changeFilter: 'pending',
+      typeFilter: 'all',
       applyResult: null,
+
+      get visibleChanges() {
+        const CONTACT = ['add_phone','update_phone','add_email','update_email','add_address','update_address'];
+        if (this.typeFilter === 'contact') return this.changes.filter(c => CONTACT.includes(c.change_type));
+        if (this.typeFilter === 'new')     return this.changes.filter(c => c.change_type === 'create_person');
+        if (this.typeFilter === 'field')   return this.changes.filter(c => c.change_type === 'update_field');
+        return this.changes;
+      },
 
       async init() {
         await this.loadBatches();
@@ -610,6 +633,19 @@
             await this.computeDiff(); // re-run diff with confirmed matches
           }
         } catch(e) { this.msg(e.message, 'error'); }
+      },
+
+      async rejectField(fieldName) {
+        if (!this.batchId) return;
+        this.loading = true;
+        try {
+          const res = await fetch(`/api/review/batch/${this.batchId}/reject-field/${encodeURIComponent(fieldName)}`, { method: 'POST' });
+          const json = await res.json();
+          if (!json.ok) throw new Error(json.error ?? 'Server error');
+          this.msg(`Rejected ${json.data.rejected} "${fieldName}" changes`, 'ok', 3000);
+          await this.loadChanges();
+        } catch(e) { this.msg(e.message, 'error'); }
+        finally { this.loading = false; }
       },
 
       async markAsNew(skId) {
