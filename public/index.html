@@ -227,8 +227,8 @@
             Quick Sync (people only)
           </button>
         </div>
-        <p class="alert alert-info" style="margin-top:1rem" x-show="loading">
-          Syncing PCO data — this may take a minute for large organisations…
+        <p class="alert alert-info" style="margin-top:1rem" x-show="loading && syncProgress">
+          Syncing PCO data… <strong x-text="syncProgress"></strong>
         </p>
       </div>
     </div>
@@ -422,6 +422,7 @@
       batchId: null,
       batches: [],
       syncStats: {},
+      syncProgress: '',
       unresolvedMatches: [],
       changes: [],
       changeCounts: {},
@@ -501,12 +502,33 @@
       },
 
       async syncPco(quick) {
+        this.loading = true;
+        this.syncProgress = 'starting…';
+        let totalSynced = 0;
+        let totalFailed = 0;
+        let offset = 0;
         try {
-          const data = await this.api('POST', `/sync${quick?'?quick=1':''}`);
-          this.msg(`✓ Synced ${data.synced} people from PCO (failed: ${data.failed})`, 'ok');
+          while (true) {
+            const qs = `?offset=${offset}${quick ? '&quick=1' : ''}`;
+            const res = await fetch('/api/sync' + qs, { method: 'POST' });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Server error');
+            const d = json.data;
+            totalSynced += d.synced;
+            totalFailed += d.failed;
+            this.syncProgress = `${totalSynced} people synced…`;
+            if (d.done) break;
+            offset = d.nextOffset;
+          }
+          this.msg(`✓ Synced ${totalSynced} people from PCO${totalFailed ? ` (failed: ${totalFailed})` : ''}`, 'ok');
           await this.loadSyncStats();
           this.step = 3;
-        } catch(e) { this.msg(e.message, 'error'); }
+        } catch(e) {
+          this.msg(e.message, 'error');
+        } finally {
+          this.loading = false;
+          this.syncProgress = '';
+        }
       },
 
       async computeDiff() {
