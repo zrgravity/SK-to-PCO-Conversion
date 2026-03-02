@@ -16,7 +16,6 @@
 import { Hono } from "hono";
 import { PcoClient } from "../pco/client";
 import {
-  upsertPcoPerson,
   clearAllPcoContactDetails,
 } from "../db/queries";
 import type { Env } from "../types";
@@ -48,59 +47,55 @@ syncRoute.post("/", async (c) => {
       return c.json({ ok: false, error: String(err) }, 502);
     }
 
-    // Build all D1 statements for this page
+    // Prepare SQL templates ONCE outside the loop.
+    // db.prepare() makes a D1 API request each time it is called; calling it
+    // once per person would burn hundreds of subrequests before any data is
+    // written. db.bind() is a local operation — no network call.
+    const stmtPerson = c.env.DB.prepare(
+      `INSERT INTO pco_people
+         (pco_id, remote_id, first_name, last_name, middle_name, nickname,
+          gender, birthdate, anniversary, membership, marital_status, status, raw_data, synced_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+       ON CONFLICT(pco_id) DO UPDATE SET
+         remote_id = excluded.remote_id, first_name = excluded.first_name,
+         last_name = excluded.last_name, middle_name = excluded.middle_name,
+         nickname = excluded.nickname, gender = excluded.gender,
+         birthdate = excluded.birthdate, anniversary = excluded.anniversary,
+         membership = excluded.membership, marital_status = excluded.marital_status,
+         status = excluded.status, raw_data = excluded.raw_data,
+         synced_at = CURRENT_TIMESTAMP`,
+    );
+    const stmtEmail   = c.env.DB.prepare(`INSERT INTO pco_emails (pco_id, address, location, primary_e) VALUES (?,?,?,?)`);
+    const stmtPhone   = c.env.DB.prepare(`INSERT INTO pco_phone_numbers (pco_id, number, location, primary_p) VALUES (?,?,?,?)`);
+    const stmtAddress = c.env.DB.prepare(`INSERT INTO pco_addresses (pco_id, street, city, state, zip, location) VALUES (?,?,?,?,?,?)`);
+
+    // Build all D1 bound statements for this page (no network calls here)
     const stmts: ReturnType<D1Database["prepare"]>[] = [];
 
     for (const person of page.people) {
       try {
         const attrs = person.attributes;
-        stmts.push(
-          c.env.DB
-            .prepare(
-              `INSERT INTO pco_people
-                 (pco_id, remote_id, first_name, last_name, middle_name, nickname,
-                  gender, birthdate, anniversary, membership, marital_status, status, raw_data, synced_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-               ON CONFLICT(pco_id) DO UPDATE SET
-                 remote_id = excluded.remote_id, first_name = excluded.first_name,
-                 last_name = excluded.last_name, middle_name = excluded.middle_name,
-                 nickname = excluded.nickname, gender = excluded.gender,
-                 birthdate = excluded.birthdate, anniversary = excluded.anniversary,
-                 membership = excluded.membership, marital_status = excluded.marital_status,
-                 status = excluded.status, raw_data = excluded.raw_data,
-                 synced_at = CURRENT_TIMESTAMP`,
-            )
-            .bind(
-              person.id, attrs.remote_id ?? null, attrs.first_name ?? null,
-              attrs.last_name ?? null, attrs.middle_name ?? null, attrs.nickname ?? null,
-              attrs.gender ?? null, attrs.birthdate ?? null, attrs.anniversary ?? null,
-              attrs.membership ?? null, attrs.marital_status ?? null, attrs.status ?? null,
-              JSON.stringify(person),
-            ),
-        );
+        stmts.push(stmtPerson.bind(
+          person.id, attrs.remote_id ?? null, attrs.first_name ?? null,
+          attrs.last_name ?? null, attrs.middle_name ?? null, attrs.nickname ?? null,
+          attrs.gender ?? null, attrs.birthdate ?? null, attrs.anniversary ?? null,
+          attrs.membership ?? null, attrs.marital_status ?? null, attrs.status ?? null,
+          JSON.stringify(person),
+        ));
 
         for (const e of page.emailMap.get(person.id) ?? []) {
-          stmts.push(
-            c.env.DB.prepare(`INSERT INTO pco_emails (pco_id, address, location, primary_e) VALUES (?,?,?,?)`)
-              .bind(person.id, e.address, e.location, e.primary ? 1 : 0),
-          );
+          stmts.push(stmtEmail.bind(person.id, e.address, e.location, e.primary ? 1 : 0));
         }
         for (const p of page.phoneMap.get(person.id) ?? []) {
-          stmts.push(
-            c.env.DB.prepare(`INSERT INTO pco_phone_numbers (pco_id, number, location, primary_p) VALUES (?,?,?,?)`)
-              .bind(person.id, p.number, p.location, p.primary ? 1 : 0),
-          );
+          stmts.push(stmtPhone.bind(person.id, p.number, p.location, p.primary ? 1 : 0));
         }
         for (const a of page.addressMap.get(person.id) ?? []) {
-          stmts.push(
-            c.env.DB.prepare(`INSERT INTO pco_addresses (pco_id, street, city, state, zip, location) VALUES (?,?,?,?,?,?)`)
-              .bind(person.id, a.street, a.city, a.state, a.zip, a.location),
-          );
+          stmts.push(stmtAddress.bind(person.id, a.street, a.city, a.state, a.zip, a.location));
         }
 
         synced++;
       } catch (err) {
-        console.error(`Failed to build statements for person ${person.id}:`, err);
+        console.error(`Failed to build statements for person ${person.id}:`, String(err));
         failed++;
       }
     }
@@ -133,28 +128,43 @@ syncRoute.post("/", async (c) => {
       return c.json({ ok: false, error: String(err) }, 502);
     }
 
+    // Prepare once outside the loop — same reason as full-sync mode above.
+    const stmtPerson = c.env.DB.prepare(
+      `INSERT INTO pco_people
+         (pco_id, remote_id, first_name, last_name, middle_name, nickname,
+          gender, birthdate, anniversary, membership, marital_status, status, raw_data, synced_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+       ON CONFLICT(pco_id) DO UPDATE SET
+         remote_id = excluded.remote_id, first_name = excluded.first_name,
+         last_name = excluded.last_name, middle_name = excluded.middle_name,
+         nickname = excluded.nickname, gender = excluded.gender,
+         birthdate = excluded.birthdate, anniversary = excluded.anniversary,
+         membership = excluded.membership, marital_status = excluded.marital_status,
+         status = excluded.status, raw_data = excluded.raw_data,
+         synced_at = CURRENT_TIMESTAMP`,
+    );
+
+    const stmts: ReturnType<D1Database["prepare"]>[] = [];
     for (const person of page.data) {
       try {
-        await upsertPcoPerson(c.env.DB, {
-          pco_id: person.id,
-          remote_id: person.attributes.remote_id ?? null,
-          first_name: person.attributes.first_name ?? null,
-          last_name: person.attributes.last_name ?? null,
-          middle_name: person.attributes.middle_name ?? null,
-          nickname: person.attributes.nickname ?? null,
-          gender: person.attributes.gender ?? null,
-          birthdate: person.attributes.birthdate ?? null,
-          anniversary: person.attributes.anniversary ?? null,
-          membership: person.attributes.membership ?? null,
-          marital_status: person.attributes.marital_status ?? null,
-          status: person.attributes.status ?? null,
-          raw_data: JSON.stringify(person),
-        });
+        const a = person.attributes;
+        stmts.push(stmtPerson.bind(
+          person.id, a.remote_id ?? null, a.first_name ?? null,
+          a.last_name ?? null, a.middle_name ?? null, a.nickname ?? null,
+          a.gender ?? null, a.birthdate ?? null, a.anniversary ?? null,
+          a.membership ?? null, a.marital_status ?? null, a.status ?? null,
+          JSON.stringify(person),
+        ));
         synced++;
       } catch (err) {
-        console.error(`Failed to sync person ${person.id}:`, err);
+        console.error(`Failed to build statement for person ${person.id}:`, String(err));
         failed++;
       }
+    }
+
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < stmts.length; i += BATCH_SIZE) {
+      await c.env.DB.batch(stmts.slice(i, i + BATCH_SIZE));
     }
 
     const hasMore = !!page.meta.next;
