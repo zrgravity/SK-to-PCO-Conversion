@@ -96,6 +96,8 @@ export class PersonMatcher {
     // 1. Previously confirmed match
     const confirmed = confirmedMap.get(sk.sk_individual_id);
     if (confirmed) {
+      // '__new__' sentinel means the user explicitly chose "New" for this person
+      if (confirmed.pco_id === "__new__") return { kind: "new" };
       return { kind: "confirmed", pco_id: confirmed.pco_id, confidence: confirmed.confidence };
     }
 

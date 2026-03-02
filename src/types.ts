@@ -74,7 +74,7 @@ export interface PersonMatchRow {
   id: number;
   sk_individual_id: string;
   pco_person_id: string;
-  confidence: "remote_id" | "name_dob" | "name_email" | "manual";
+  confidence: "remote_id" | "name_dob" | "name_email" | "name_only" | "manual";
   user_confirmed: number;
   confirmed_by: string | null;
   created_at: string;

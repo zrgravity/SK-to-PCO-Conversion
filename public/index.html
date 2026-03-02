@@ -613,11 +613,15 @@
       },
 
       async markAsNew(skId) {
-        // Remove from unresolved — will be treated as new person when diff runs
-        this.unresolvedMatches = this.unresolvedMatches.filter(u => u.sk_individual_id !== skId);
-        if (this.unresolvedMatches.length === 0) {
-          await this.computeDiff();
-        }
+        try {
+          // Persist a '__new__' sentinel so the matcher skips this person on re-run
+          await this.api('POST', '/matches', { sk_individual_id: skId, pco_person_id: '__new__' });
+          this.unresolvedMatches = this.unresolvedMatches.filter(u => u.sk_individual_id !== skId);
+          this.msg('Marked as new person', 'ok', 2000);
+          if (this.unresolvedMatches.length === 0) {
+            await this.computeDiff();
+          }
+        } catch(e) { this.msg(e.message, 'error'); }
       },
 
       async loadChanges() {
