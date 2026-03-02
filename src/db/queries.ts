@@ -7,6 +7,7 @@ import type {
   ImportBatchRow,
   SkPersonRow,
   PcoPersonRow,
+  PcoPersonLight,
   PersonMatchRow,
   PendingChangeRow,
   ChangeStatus,
@@ -271,6 +272,118 @@ export async function clearAllPcoContactDetails(db: D1Database): Promise<void> {
   ]);
 }
 
+// ── Diff-optimised query helpers ──────────────────────────────────────────────
+
+/** All PCO people without the raw_data blob — much lighter for diff/match paths. */
+export async function getAllPcoPeopleLight(db: D1Database): Promise<PcoPersonLight[]> {
+  const result = await db
+    .prepare(`SELECT pco_id, remote_id, first_name, last_name, middle_name, nickname,
+                     gender, birthdate, anniversary, membership, marital_status, status, synced_at
+              FROM pco_people ORDER BY last_name, first_name`)
+    .all<PcoPersonLight>();
+  return result.results;
+}
+
+/** One page of SK people for a batch, ordered consistently. */
+export async function getSkPeopleByBatchPage(
+  db: D1Database,
+  batchId: string,
+  offset: number,
+  limit: number,
+): Promise<SkPersonRow[]> {
+  const result = await db
+    .prepare(`SELECT * FROM sk_people WHERE import_batch_id = ? ORDER BY last_name, first_name, sk_individual_id LIMIT ? OFFSET ?`)
+    .bind(batchId, limit, offset)
+    .all<SkPersonRow>();
+  return result.results;
+}
+
+/** Total SK people count for a batch (used for pagination done-check). */
+export async function countSkPeopleByBatch(db: D1Database, batchId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) as n FROM sk_people WHERE import_batch_id = ?`)
+    .bind(batchId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** Contacts for a specific set of PCO IDs — avoids loading the full tables. */
+export async function getPcoContactsForPcoIds(db: D1Database, pcoIds: string[]): Promise<{
+  emailMap: Map<string, Array<{ id: number; address: string; location: string }>>;
+  phoneMap: Map<string, Array<{ id: number; number: string; location: string }>>;
+  addressMap: Map<string, Array<{ id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>>;
+}> {
+  if (pcoIds.length === 0) {
+    return { emailMap: new Map(), phoneMap: new Map(), addressMap: new Map() };
+  }
+  const ph = pcoIds.map(() => "?").join(",");
+  const [eRes, pRes, aRes] = await Promise.all([
+    db.prepare(`SELECT pco_id, id, address, location FROM pco_emails WHERE pco_id IN (${ph})`)
+      .bind(...pcoIds).all<{ pco_id: string; id: number; address: string; location: string }>(),
+    db.prepare(`SELECT pco_id, id, number, location FROM pco_phone_numbers WHERE pco_id IN (${ph})`)
+      .bind(...pcoIds).all<{ pco_id: string; id: number; number: string; location: string }>(),
+    db.prepare(`SELECT pco_id, id, street, city, state, zip, location FROM pco_addresses WHERE pco_id IN (${ph})`)
+      .bind(...pcoIds).all<{ pco_id: string; id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>(),
+  ]);
+  const emailMap = new Map<string, Array<{ id: number; address: string; location: string }>>();
+  for (const r of eRes.results) {
+    const arr = emailMap.get(r.pco_id) ?? [];
+    arr.push({ id: r.id, address: r.address, location: r.location });
+    emailMap.set(r.pco_id, arr);
+  }
+  const phoneMap = new Map<string, Array<{ id: number; number: string; location: string }>>();
+  for (const r of pRes.results) {
+    const arr = phoneMap.get(r.pco_id) ?? [];
+    arr.push({ id: r.id, number: r.number, location: r.location });
+    phoneMap.set(r.pco_id, arr);
+  }
+  const addressMap = new Map<string, Array<{ id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>>();
+  for (const r of aRes.results) {
+    const arr = addressMap.get(r.pco_id) ?? [];
+    arr.push({ id: r.id, street: r.street, city: r.city, state: r.state, zip: r.zip, location: r.location });
+    addressMap.set(r.pco_id, arr);
+  }
+  return { emailMap, phoneMap, addressMap };
+}
+
+/** Delete all pending changes for a batch so diff can be re-computed from scratch. */
+export async function clearPendingChangesForBatch(db: D1Database, batchId: string): Promise<void> {
+  await db.prepare(`DELETE FROM pending_changes WHERE import_batch_id = ?`).bind(batchId).run();
+}
+
+/** Batch-upsert person matches — avoids O(N) sequential await inside a loop. */
+export async function batchUpsertPersonMatches(
+  db: D1Database,
+  matches: Array<{
+    skId: string;
+    pcoId: string;
+    confidence: PersonMatchRow["confidence"];
+    userConfirmed: boolean;
+    confirmedBy: string | null;
+  }>,
+): Promise<void> {
+  if (matches.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO person_matches
+       (sk_individual_id, pco_person_id, confidence, user_confirmed, confirmed_by)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT(sk_individual_id) DO UPDATE SET
+       pco_person_id  = excluded.pco_person_id,
+       confidence     = excluded.confidence,
+       user_confirmed = excluded.user_confirmed,
+       confirmed_by   = excluded.confirmed_by,
+       updated_at     = CURRENT_TIMESTAMP`,
+  );
+  const CHUNK = 100;
+  for (let i = 0; i < matches.length; i += CHUNK) {
+    await db.batch(
+      matches.slice(i, i + CHUNK).map((m) =>
+        stmt.bind(m.skId, m.pcoId, m.confidence, m.userConfirmed ? 1 : 0, m.confirmedBy),
+      ),
+    );
+  }
+}
+
 export async function insertPcoEmail(
   db: D1Database,
   pcoId: string,
@@ -369,18 +482,19 @@ export async function insertPendingChanges(
   db: D1Database,
   changes: Omit<PendingChangeRow, "id" | "status" | "reviewed_by" | "reviewed_at" | "applied_at" | "error_message" | "created_at">[],
 ): Promise<void> {
+  if (changes.length === 0) return;
+  // Prepare ONCE outside both loops — db.prepare() may cost a subrequest
+  const stmt = db.prepare(
+    `INSERT INTO pending_changes
+       (import_batch_id, sk_individual_id, pco_person_id, change_type,
+        field_name, old_value, new_value)
+     VALUES (?,?,?,?,?,?,?)`,
+  );
   const CHUNK = 50;
   for (let i = 0; i < changes.length; i += CHUNK) {
-    const chunk = changes.slice(i, i + CHUNK);
-    const stmts = chunk.map((c) =>
-      db
-        .prepare(
-          `INSERT INTO pending_changes
-             (import_batch_id, sk_individual_id, pco_person_id, change_type,
-              field_name, old_value, new_value)
-           VALUES (?,?,?,?,?,?,?)`,
-        )
-        .bind(
+    await db.batch(
+      changes.slice(i, i + CHUNK).map((c) =>
+        stmt.bind(
           c.import_batch_id,
           c.sk_individual_id,
           c.pco_person_id,
@@ -389,8 +503,8 @@ export async function insertPendingChanges(
           c.old_value,
           c.new_value,
         ),
+      ),
     );
-    await db.batch(stmts);
   }
 }
 

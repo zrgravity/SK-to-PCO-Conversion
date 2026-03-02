@@ -4,7 +4,7 @@
  */
 
 import type { SkPerson } from "../sk/types";
-import type { PcoPersonRow, PendingChangeRow, ChangeType } from "../types";
+import type { PcoPersonRow, PcoPersonLight, PendingChangeRow, ChangeType } from "../types";
 
 // ── Helper types ──────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ function normEmail(s: string | null | undefined): string {
  */
 export function diffPersonFields(
   sk: SkPerson,
-  pco: PcoPersonRow,
+  pco: PcoPersonRow | PcoPersonLight,
 ): ProposedChange[] {
   const changes: ProposedChange[] = [];
 

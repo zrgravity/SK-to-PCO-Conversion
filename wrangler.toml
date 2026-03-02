@@ -25,11 +25,6 @@ database_id = "c6860a34-f3cd-4bcf-8076-1373b723b1b2"
 pattern = "sk-pco.giedesignweb.com"
 custom_domain = true
 
-[limits]
-# Allow up to 30 s of CPU time so diff over ~2000 people doesn't hit the
-# default 50 ms CPU limit on the Workers paid plan.
-cpu_ms = 30000
-
 [dev]
 port = 8787
 local_protocol = "http"

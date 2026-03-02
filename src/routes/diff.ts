@@ -1,7 +1,10 @@
 /**
- * POST /api/diff/:batchId
- * Computes differences between a SK import batch and the PCO snapshot,
- * stores them as pending_changes, and returns a summary.
+ * POST /api/diff/:batchId?offset=N
+ * Computes differences for ONE PAGE of SK people against the PCO snapshot.
+ * Call repeatedly with offset=nextOffset until done=true.
+ *
+ * On offset=0 any previous pending_changes for this batch are cleared so the
+ * diff can be re-run cleanly (e.g. after user confirms unresolved matches).
  *
  * GET /api/diff/:batchId
  * Returns the list of pending changes for a batch (with optional status filter).
@@ -17,13 +20,12 @@ import {
   createPersonChange,
 } from "../diff/differ";
 import {
-  getSkPeopleByBatch,
-  getAllPcoPeople,
-  getAllPcoEmailsBulk,
-  getAllPcoPhonesBulk,
-  getAllPcoAddressesBulk,
+  getAllPcoPeopleLight,
   getAllPersonMatches,
-  upsertPersonMatch,
+  getSkPeopleByBatchPage,
+  getPcoContactsForPcoIds,
+  clearPendingChangesForBatch,
+  batchUpsertPersonMatches,
   insertPendingChanges,
   getPendingChanges,
   countChanges,
@@ -51,32 +53,47 @@ diffRoute.get("/:batchId", async (c) => {
   return c.json({ ok: true, data: { batch, changes, counts } });
 });
 
-/** POST /api/diff/:batchId — compute and store diffs */
+/** POST /api/diff/:batchId — compute and store diffs (one page per call) */
 diffRoute.post("/:batchId", async (c) => {
   const batchId = c.req.param("batchId");
+  const offset = Math.max(0, parseInt(c.req.query("offset") ?? "0", 10) || 0);
+  const perPage = Math.min(100, Math.max(1, parseInt(c.req.query("per_page") ?? "100", 10) || 100));
+
   const batch = await getBatch(c.env.DB, batchId);
   if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
 
-  const [skPeople, allPco, allMatches, bulkEmails, bulkPhones, bulkAddresses] = await Promise.all([
-    getSkPeopleByBatch(c.env.DB, batchId),
-    getAllPcoPeople(c.env.DB),
+  // On the first page, wipe stale pending_changes so re-runs start fresh.
+  if (offset === 0) {
+    await clearPendingChangesForBatch(c.env.DB, batchId);
+  }
+
+  // ── Load data for this page ──────────────────────────────────────────────
+  // Four parallel queries; PcoPersonLight omits raw_data → much less CPU/memory.
+  const [allPco, allMatches, allPcoEmailsRaw, skPage] = await Promise.all([
+    getAllPcoPeopleLight(c.env.DB),
     getAllPersonMatches(c.env.DB),
-    getAllPcoEmailsBulk(c.env.DB),
-    getAllPcoPhonesBulk(c.env.DB),
-    getAllPcoAddressesBulk(c.env.DB),
+    c.env.DB
+      .prepare(`SELECT pco_id, address FROM pco_emails`)
+      .all<{ pco_id: string; address: string }>(),
+    getSkPeopleByBatchPage(c.env.DB, batchId, offset, perPage),
   ]);
 
   if (allPco.length === 0) {
     return c.json(
-      {
-        ok: false,
-        error: "PCO snapshot is empty. Run POST /api/sync first.",
-      },
+      { ok: false, error: "PCO snapshot is empty. Run POST /api/sync first." },
       400,
     );
   }
 
-  // Build confirmed-matches map from DB
+  // Empty page → we've processed everyone; signal done.
+  if (skPage.length === 0) {
+    return c.json({
+      ok: true,
+      data: { batch_id: batchId, changes_this_page: 0, unresolved_matches: 0, unresolved: [], offset, nextOffset: null, done: true },
+    });
+  }
+
+  // ── Build lookup structures ──────────────────────────────────────────────
   const confirmedMap = new Map(
     allMatches.map((m) => [
       m.sk_individual_id,
@@ -84,14 +101,8 @@ diffRoute.post("/:batchId", async (c) => {
     ]),
   );
 
-  // Enrich PCO snapshot with email list for scoring
-  // We already have emails in pco_emails table; load them in bulk
-  const allPcoEmails = await c.env.DB
-    .prepare(`SELECT pco_id, address FROM pco_emails`)
-    .all<{ pco_id: string; address: string }>();
-
   const emailsByPcoId = new Map<string, string[]>();
-  for (const row of allPcoEmails.results) {
+  for (const row of allPcoEmailsRaw.results) {
     const arr = emailsByPcoId.get(row.pco_id) ?? [];
     arr.push(row.address);
     emailsByPcoId.set(row.pco_id, arr);
@@ -101,10 +112,10 @@ diffRoute.post("/:batchId", async (c) => {
     ...p,
     emails: emailsByPcoId.get(p.pco_id) ?? [],
   }));
+  const pcoById = new Map(enrichedPco.map((p) => [p.pco_id, p]));
 
-  // Run matcher
-  const matcher = new PersonMatcher();
-  const skPersonObjects = skPeople.map((row) => ({
+  // ── Convert SK rows → SkPerson objects ───────────────────────────────────
+  const skPersonObjects = skPage.map((row) => ({
     sk_individual_id: row.sk_individual_id,
     sk_family_id: row.sk_family_id,
     first_name: row.first_name,
@@ -131,177 +142,109 @@ diffRoute.post("/:batchId", async (c) => {
     raw: {} as import("../sk/types").SkRawRow,
   }));
 
+  // ── Match this page ──────────────────────────────────────────────────────
+  const matcher = new PersonMatcher();
   const { autoMatched, unresolved } = matcher.matchAll(
     skPersonObjects,
     confirmedMap,
     enrichedPco,
   );
 
-  // Persist auto-matches back to DB
+  // Batch-upsert auto-matches (1 db.batch call instead of O(N) awaits)
+  const matchesToPersist: Array<{
+    skId: string;
+    pcoId: string;
+    confidence: import("../types").PersonMatchRow["confidence"];
+    userConfirmed: boolean;
+    confirmedBy: null;
+  }> = [];
   for (const [skId, result] of autoMatched) {
     if (result.kind === "confirmed" || result.kind === "strong") {
-      await upsertPersonMatch(
-        c.env.DB,
+      matchesToPersist.push({
         skId,
-        result.pco_id,
-        result.confidence as import("../types").PersonMatchRow["confidence"],
-        result.kind === "confirmed",
-        null,
-      );
+        pcoId: result.pco_id,
+        confidence: result.confidence as import("../types").PersonMatchRow["confidence"],
+        userConfirmed: result.kind === "confirmed",
+        confirmedBy: null,
+      });
     }
   }
+  await batchUpsertPersonMatches(c.env.DB, matchesToPersist);
 
-  // Build proposed changes
+  // ── Load contacts only for matched PCO IDs on this page ─────────────────
+  // WHERE IN (up to 100 IDs) — far cheaper than loading all 5000+ contact rows.
+  const matchedPcoIds = [
+    ...new Set(
+      [...autoMatched.values()]
+        .filter((r) => r.kind !== "new" && r.kind !== "unresolved")
+        .map((r) => r.pco_id),
+    ),
+  ];
+  const { emailMap, phoneMap, addressMap } = await getPcoContactsForPcoIds(
+    c.env.DB,
+    matchedPcoIds,
+  );
+
+  // ── Build proposed changes ───────────────────────────────────────────────
   const proposedChanges: (ProposedChange & { import_batch_id: string })[] = [];
 
   for (const sk of skPersonObjects) {
     const matchResult = autoMatched.get(sk.sk_individual_id);
 
     if (!matchResult || matchResult.kind === "new" || matchResult.kind === "unresolved") {
-      // New person — propose creation + contact fields
-      proposedChanges.push({
-        ...createPersonChange(sk),
-        import_batch_id: batchId,
-      });
-      // Also add email/phone/address changes pointing at null pco_person_id
-      // (they will be applied after the person is created)
-      if (sk.email_home) {
-        proposedChanges.push({
-          import_batch_id: batchId,
-          sk_individual_id: sk.sk_individual_id,
-          pco_person_id: null,
-          change_type: "add_email",
-          field_name: "Home",
-          old_value: null,
-          new_value: JSON.stringify(sk.email_home),
-        });
-      }
-      if (sk.email_work) {
-        proposedChanges.push({
-          import_batch_id: batchId,
-          sk_individual_id: sk.sk_individual_id,
-          pco_person_id: null,
-          change_type: "add_email",
-          field_name: "Work",
-          old_value: null,
-          new_value: JSON.stringify(sk.email_work),
-        });
-      }
-      if (sk.home_phone) {
-        proposedChanges.push({
-          import_batch_id: batchId,
-          sk_individual_id: sk.sk_individual_id,
-          pco_person_id: null,
-          change_type: "add_phone",
-          field_name: "Home",
-          old_value: null,
-          new_value: JSON.stringify(sk.home_phone),
-        });
-      }
-      if (sk.cell_phone) {
-        proposedChanges.push({
-          import_batch_id: batchId,
-          sk_individual_id: sk.sk_individual_id,
-          pco_person_id: null,
-          change_type: "add_phone",
-          field_name: "Mobile",
-          old_value: null,
-          new_value: JSON.stringify(sk.cell_phone),
-        });
-      }
-      if (sk.work_phone) {
-        proposedChanges.push({
-          import_batch_id: batchId,
-          sk_individual_id: sk.sk_individual_id,
-          pco_person_id: null,
-          change_type: "add_phone",
-          field_name: "Work",
-          old_value: null,
-          new_value: JSON.stringify(sk.work_phone),
-        });
-      }
-      if (sk.address_street) {
-        proposedChanges.push({
-          import_batch_id: batchId,
-          sk_individual_id: sk.sk_individual_id,
-          pco_person_id: null,
-          change_type: "add_address",
-          field_name: "Home",
-          old_value: null,
-          new_value: JSON.stringify({
-            street: sk.address_street,
-            city: sk.address_city,
-            state: sk.address_state,
-            zip: sk.address_zip,
-          }),
-        });
-      }
+      proposedChanges.push({ ...createPersonChange(sk), import_batch_id: batchId });
+      if (sk.email_home) proposedChanges.push({ import_batch_id: batchId, sk_individual_id: sk.sk_individual_id, pco_person_id: null, change_type: "add_email", field_name: "Home", old_value: null, new_value: JSON.stringify(sk.email_home) });
+      if (sk.email_work) proposedChanges.push({ import_batch_id: batchId, sk_individual_id: sk.sk_individual_id, pco_person_id: null, change_type: "add_email", field_name: "Work", old_value: null, new_value: JSON.stringify(sk.email_work) });
+      if (sk.home_phone) proposedChanges.push({ import_batch_id: batchId, sk_individual_id: sk.sk_individual_id, pco_person_id: null, change_type: "add_phone", field_name: "Home", old_value: null, new_value: JSON.stringify(sk.home_phone) });
+      if (sk.cell_phone) proposedChanges.push({ import_batch_id: batchId, sk_individual_id: sk.sk_individual_id, pco_person_id: null, change_type: "add_phone", field_name: "Mobile", old_value: null, new_value: JSON.stringify(sk.cell_phone) });
+      if (sk.work_phone) proposedChanges.push({ import_batch_id: batchId, sk_individual_id: sk.sk_individual_id, pco_person_id: null, change_type: "add_phone", field_name: "Work", old_value: null, new_value: JSON.stringify(sk.work_phone) });
+      if (sk.address_street) proposedChanges.push({ import_batch_id: batchId, sk_individual_id: sk.sk_individual_id, pco_person_id: null, change_type: "add_address", field_name: "Home", old_value: null, new_value: JSON.stringify({ street: sk.address_street, city: sk.address_city, state: sk.address_state, zip: sk.address_zip }) });
       continue;
     }
 
     // Existing person — compute field-level diffs
     const pcoId = matchResult.pco_id;
-    const pcoPerson = enrichedPco.find((p) => p.pco_id === pcoId);
+    const pcoPerson = pcoById.get(pcoId);
     if (!pcoPerson) continue;
 
     const fieldChanges = diffPersonFields(sk, pcoPerson);
-    proposedChanges.push(
-      ...fieldChanges.map((fc) => ({ ...fc, import_batch_id: batchId })),
-    );
+    proposedChanges.push(...fieldChanges.map((fc) => ({ ...fc, import_batch_id: batchId })));
 
-    // Contact diffs — use pre-loaded Maps (O(1) lookup, no extra DB round trips)
-    const emails = bulkEmails.get(pcoId) ?? [];
-    const phones = bulkPhones.get(pcoId) ?? [];
-    const addresses = bulkAddresses.get(pcoId) ?? [];
-
-    const emailChanges = diffEmails(
-      sk,
-      pcoId,
-      emails.map((e) => ({ id: String(e.id), address: e.address, location: e.location })),
-    );
-    const phoneChanges = diffPhones(
-      sk,
-      pcoId,
-      phones.map((p) => ({ id: String(p.id), number: p.number, location: p.location })),
-    );
-    const addrChanges = diffAddresses(
-      sk,
-      pcoId,
-      addresses.map((a) => ({
-        id: String(a.id),
-        street: a.street,
-        city: a.city,
-        state: a.state,
-        zip: a.zip,
-        location: a.location,
-      })),
-    );
+    const emails   = emailMap.get(pcoId)   ?? [];
+    const phones   = phoneMap.get(pcoId)   ?? [];
+    const addresses = addressMap.get(pcoId) ?? [];
 
     proposedChanges.push(
-      ...[...emailChanges, ...phoneChanges, ...addrChanges].map((c2) => ({
-        ...c2,
-        import_batch_id: batchId,
-      })),
+      ...[
+        ...diffEmails(sk, pcoId, emails.map((e) => ({ id: String(e.id), address: e.address, location: e.location }))),
+        ...diffPhones(sk, pcoId, phones.map((p) => ({ id: String(p.id), number: p.number, location: p.location }))),
+        ...diffAddresses(sk, pcoId, addresses.map((a) => ({ id: String(a.id), street: a.street, city: a.city, state: a.state, zip: a.zip, location: a.location }))),
+      ].map((c2) => ({ ...c2, import_batch_id: batchId })),
     );
   }
 
-  // Store changes in DB
-  if (proposedChanges.length > 0) {
-    await insertPendingChanges(c.env.DB, proposedChanges);
+  // ── Persist changes ──────────────────────────────────────────────────────
+  await insertPendingChanges(c.env.DB, proposedChanges);
+
+  // ── Pagination / done signal ─────────────────────────────────────────────
+  // Fewer rows than requested → this is the last page.
+  const done = skPage.length < perPage;
+  const nextOffset = done ? null : offset + skPage.length;
+
+  if (done) {
+    await updateBatchStatus(c.env.DB, batchId, "diffed");
   }
-
-  await updateBatchStatus(c.env.DB, batchId, "diffed");
-
-  const counts = await countChanges(c.env.DB, batchId);
 
   return c.json({
     ok: true,
     data: {
       batch_id: batchId,
-      total_changes: proposedChanges.length,
-      counts,
+      changes_this_page: proposedChanges.length,
       unresolved_matches: unresolved.length,
-      unresolved,
+      unresolved: unresolved as UnresolvedMatch[],
+      offset,
+      nextOffset,
+      done,
     },
   });
 });

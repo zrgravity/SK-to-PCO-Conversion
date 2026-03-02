@@ -67,6 +67,9 @@ export interface PcoPersonRow {
   synced_at: string;
 }
 
+/** Like PcoPersonRow but without the large raw_data blob — used in diff/match paths. */
+export type PcoPersonLight = Omit<PcoPersonRow, "raw_data">;
+
 export interface PersonMatchRow {
   id: number;
   sk_individual_id: string;

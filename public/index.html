@@ -245,6 +245,9 @@
           <span x-show="loading" class="spinner"></span>
           Compute Diff for batch <span x-text="batchId ? batchId.slice(0,8)+'…' : '—'"></span>
         </button>
+        <p class="alert alert-info" style="margin-top:1rem" x-show="loading && diffProgress">
+          Computing diff… <strong x-text="diffProgress"></strong>
+        </p>
 
         <!-- Unresolved matches -->
         <template x-if="unresolvedMatches.length > 0">
@@ -423,6 +426,7 @@
       batches: [],
       syncStats: {},
       syncProgress: '',
+      diffProgress: '',
       unresolvedMatches: [],
       changes: [],
       changeCounts: {},
@@ -533,16 +537,35 @@
 
       async computeDiff() {
         if (!this.batchId) return;
+        this.loading = true;
+        this.diffProgress = 'starting…';
+        let allUnresolved = [];
+        let totalChanges = 0;
+        let offset = 0;
         try {
-          const data = await this.api('POST', `/diff/${this.batchId}`);
-          this.unresolvedMatches = data.unresolved ?? [];
-          this.changeCounts = data.counts ?? {};
-          this.msg(`✓ Found ${data.total_changes} changes (${data.unresolved_matches} need manual matching)`, 'ok');
-          if (this.unresolvedMatches.length === 0) {
+          while (true) {
+            const res = await fetch(`/api/diff/${this.batchId}?offset=${offset}`, { method: 'POST' });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Server error');
+            const d = json.data;
+            allUnresolved.push(...(d.unresolved ?? []));
+            totalChanges += (d.changes_this_page ?? 0);
+            this.diffProgress = `${totalChanges} changes found so far…`;
+            if (d.done) break;
+            offset = d.nextOffset;
+          }
+          this.unresolvedMatches = allUnresolved;
+          this.msg(`✓ Diff complete — ${totalChanges} changes (${allUnresolved.length} need manual matching)`, 'ok');
+          if (allUnresolved.length === 0) {
             await this.loadChanges();
             this.step = 4;
           }
-        } catch(e) { this.msg(e.message, 'error'); }
+        } catch(e) {
+          this.msg(e.message, 'error');
+        } finally {
+          this.loading = false;
+          this.diffProgress = '';
+        }
       },
 
       async confirmMatch(skId, pcoId) {

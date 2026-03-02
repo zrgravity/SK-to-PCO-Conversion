@@ -10,7 +10,7 @@
  */
 
 import type { SkPerson } from "../sk/types";
-import type { PcoPersonRow } from "../types";
+import type { PcoPersonRow, PcoPersonLight } from "../types";
 import type { MatchCandidate, UnresolvedMatch } from "../types";
 
 // ── Scoring helpers ───────────────────────────────────────────────────────────
@@ -28,7 +28,8 @@ function matches(a: string | null | undefined, b: string | null | undefined): bo
 
 // ── Candidate scoring ─────────────────────────────────────────────────────────
 
-type PcoSnapshot = PcoPersonRow & {
+// Accept either the full row (from sync) or the light row (no raw_data, from diff)
+type PcoSnapshot = (PcoPersonRow | PcoPersonLight) & {
   emails?: string[];  // email addresses from pco_emails
 };
 
