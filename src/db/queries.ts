@@ -317,14 +317,13 @@ export async function getPcoContactsForPcoIds(db: D1Database, pcoIds: string[]):
     return { emailMap: new Map(), phoneMap: new Map(), addressMap: new Map() };
   }
   const ph = pcoIds.map(() => "?").join(",");
-  const [eRes, pRes, aRes] = await Promise.all([
-    db.prepare(`SELECT pco_id, id, address, location FROM pco_emails WHERE pco_id IN (${ph})`)
-      .bind(...pcoIds).all<{ pco_id: string; id: number; address: string; location: string }>(),
-    db.prepare(`SELECT pco_id, id, number, location FROM pco_phone_numbers WHERE pco_id IN (${ph})`)
-      .bind(...pcoIds).all<{ pco_id: string; id: number; number: string; location: string }>(),
-    db.prepare(`SELECT pco_id, id, street, city, state, zip, location FROM pco_addresses WHERE pco_id IN (${ph})`)
-      .bind(...pcoIds).all<{ pco_id: string; id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>(),
-  ]);
+  // D1 free tier throttles under concurrent queries — run sequentially
+  const eRes = await db.prepare(`SELECT pco_id, id, address, location FROM pco_emails WHERE pco_id IN (${ph})`)
+    .bind(...pcoIds).all<{ pco_id: string; id: number; address: string; location: string }>();
+  const pRes = await db.prepare(`SELECT pco_id, id, number, location FROM pco_phone_numbers WHERE pco_id IN (${ph})`)
+    .bind(...pcoIds).all<{ pco_id: string; id: number; number: string; location: string }>();
+  const aRes = await db.prepare(`SELECT pco_id, id, street, city, state, zip, location FROM pco_addresses WHERE pco_id IN (${ph})`)
+    .bind(...pcoIds).all<{ pco_id: string; id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>();
   const emailMap = new Map<string, Array<{ id: number; address: string; location: string }>>();
   for (const r of eRes.results) {
     const arr = emailMap.get(r.pco_id) ?? [];

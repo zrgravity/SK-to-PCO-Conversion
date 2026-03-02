@@ -57,7 +57,7 @@ diffRoute.get("/:batchId", async (c) => {
 diffRoute.post("/:batchId", async (c) => {
   const batchId = c.req.param("batchId");
   const offset = Math.max(0, parseInt(c.req.query("offset") ?? "0", 10) || 0);
-  const perPage = Math.min(100, Math.max(1, parseInt(c.req.query("per_page") ?? "100", 10) || 100));
+  const perPage = Math.min(50, Math.max(1, parseInt(c.req.query("per_page") ?? "50", 10) || 50));
 
   const batch = await getBatch(c.env.DB, batchId);
   if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
@@ -68,15 +68,13 @@ diffRoute.post("/:batchId", async (c) => {
   }
 
   // ── Load data for this page ──────────────────────────────────────────────
-  // Four parallel queries; PcoPersonLight omits raw_data → much less CPU/memory.
-  const [allPco, allMatches, allPcoEmailsRaw, skPage] = await Promise.all([
-    getAllPcoPeopleLight(c.env.DB),
-    getAllPersonMatches(c.env.DB),
-    c.env.DB
-      .prepare(`SELECT pco_id, address FROM pco_emails`)
-      .all<{ pco_id: string; address: string }>(),
-    getSkPeopleByBatchPage(c.env.DB, batchId, offset, perPage),
-  ]);
+  // Sequential queries — D1 free tier throws internal errors under high concurrency.
+  const allPco = await getAllPcoPeopleLight(c.env.DB);
+  const allMatches = await getAllPersonMatches(c.env.DB);
+  const allPcoEmailsRaw = await c.env.DB
+    .prepare(`SELECT pco_id, address FROM pco_emails`)
+    .all<{ pco_id: string; address: string }>();
+  const skPage = await getSkPeopleByBatchPage(c.env.DB, batchId, offset, perPage);
 
   if (allPco.length === 0) {
     return c.json(
