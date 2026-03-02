@@ -10,7 +10,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:migrate:local": "wrangler d1 execute sk-pco-db --local --file=src/db/schema.sql",
-    "db:migrate:remote": "wrangler d1 execute sk-pco-db --file=src/db/schema.sql",
+    "db:migrate:remote": "wrangler d1 execute sk-pco-db --remote --file=src/db/schema.sql",
     "db:studio:local": "wrangler d1 studio sk-pco-db --local",
     "type-check": "tsc --noEmit"
   },
