@@ -218,14 +218,56 @@ export async function getPcoAddresses(
   return result.results;
 }
 
-export async function clearPcoContactDetails(
+export async function getAllPcoEmailsBulk(
   db: D1Database,
-  pcoId: string,
-): Promise<void> {
+): Promise<Map<string, Array<{ id: number; address: string; location: string }>>> {
+  const result = await db
+    .prepare(`SELECT pco_id, id, address, location FROM pco_emails`)
+    .all<{ pco_id: string; id: number; address: string; location: string }>();
+  const map = new Map<string, Array<{ id: number; address: string; location: string }>>();
+  for (const row of result.results) {
+    const arr = map.get(row.pco_id) ?? [];
+    arr.push({ id: row.id, address: row.address, location: row.location });
+    map.set(row.pco_id, arr);
+  }
+  return map;
+}
+
+export async function getAllPcoPhonesBulk(
+  db: D1Database,
+): Promise<Map<string, Array<{ id: number; number: string; location: string }>>> {
+  const result = await db
+    .prepare(`SELECT pco_id, id, number, location FROM pco_phone_numbers`)
+    .all<{ pco_id: string; id: number; number: string; location: string }>();
+  const map = new Map<string, Array<{ id: number; number: string; location: string }>>();
+  for (const row of result.results) {
+    const arr = map.get(row.pco_id) ?? [];
+    arr.push({ id: row.id, number: row.number, location: row.location });
+    map.set(row.pco_id, arr);
+  }
+  return map;
+}
+
+export async function getAllPcoAddressesBulk(
+  db: D1Database,
+): Promise<Map<string, Array<{ id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>>> {
+  const result = await db
+    .prepare(`SELECT pco_id, id, street, city, state, zip, location FROM pco_addresses`)
+    .all<{ pco_id: string; id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>();
+  const map = new Map<string, Array<{ id: number; street: string | null; city: string | null; state: string | null; zip: string | null; location: string }>>();
+  for (const row of result.results) {
+    const arr = map.get(row.pco_id) ?? [];
+    arr.push({ id: row.id, street: row.street, city: row.city, state: row.state, zip: row.zip, location: row.location });
+    map.set(row.pco_id, arr);
+  }
+  return map;
+}
+
+export async function clearAllPcoContactDetails(db: D1Database): Promise<void> {
   await db.batch([
-    db.prepare(`DELETE FROM pco_emails WHERE pco_id = ?`).bind(pcoId),
-    db.prepare(`DELETE FROM pco_phone_numbers WHERE pco_id = ?`).bind(pcoId),
-    db.prepare(`DELETE FROM pco_addresses WHERE pco_id = ?`).bind(pcoId),
+    db.prepare(`DELETE FROM pco_emails`),
+    db.prepare(`DELETE FROM pco_phone_numbers`),
+    db.prepare(`DELETE FROM pco_addresses`),
   ]);
 }
 

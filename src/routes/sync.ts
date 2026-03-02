@@ -13,10 +13,7 @@ import { Hono } from "hono";
 import { PcoClient } from "../pco/client";
 import {
   upsertPcoPerson,
-  insertPcoEmail,
-  insertPcoPhone,
-  insertPcoAddress,
-  clearPcoContactDetails,
+  clearAllPcoContactDetails,
 } from "../db/queries";
 import type { Env } from "../types";
 
@@ -30,70 +27,129 @@ syncRoute.post("/", async (c) => {
   let synced = 0;
   let failed = 0;
 
-  for await (const person of pco.getAllPeople()) {
-    try {
-      const attrs = person.attributes;
-      await upsertPcoPerson(c.env.DB, {
-        pco_id: person.id,
-        remote_id: attrs.remote_id ?? null,
-        first_name: attrs.first_name ?? null,
-        last_name: attrs.last_name ?? null,
-        middle_name: attrs.middle_name ?? null,
-        nickname: attrs.nickname ?? null,
-        gender: attrs.gender ?? null,
-        birthdate: attrs.birthdate ?? null,
-        anniversary: attrs.anniversary ?? null,
-        membership: attrs.membership ?? null,
-        marital_status: attrs.marital_status ?? null,
-        status: attrs.status ?? null,
-        raw_data: JSON.stringify(person),
-      });
+  if (!quick) {
+    // Clear all contact details once upfront so we can re-insert cleanly.
+    // Doing this per-person would be O(N) D1 round trips; once is O(1).
+    await clearAllPcoContactDetails(c.env.DB);
+  }
 
-      if (!quick) {
-        // Fetch and store contact details
-        await clearPcoContactDetails(c.env.DB, person.id);
+  let offset = 0;
+  const perPage = 100;
 
-        const [emails, phones, addresses] = await Promise.all([
-          pco.getEmails(person.id),
-          pco.getPhoneNumbers(person.id),
-          pco.getAddresses(person.id),
-        ]);
+  while (true) {
+    if (!quick) {
+      // Sideload contacts in the same page request → 1 PCO call per page
+      // instead of 1 + N*3 PCO calls per page.
+      let page;
+      try {
+        page = await pco.getPeoplePageWithContacts(offset, perPage);
+      } catch (err) {
+        console.error(`Failed to fetch people page at offset ${offset}:`, err);
+        break;
+      }
 
-        for (const e of emails) {
-          await insertPcoEmail(
-            c.env.DB,
-            person.id,
-            e.attributes.address,
-            e.attributes.location,
-            e.attributes.primary,
+      // Collect D1 statements for this whole page and run as a single batch
+      const stmts: ReturnType<D1Database["prepare"]>[] = [];
+
+      for (const person of page.people) {
+        try {
+          const attrs = person.attributes;
+          stmts.push(
+            c.env.DB
+              .prepare(
+                `INSERT INTO pco_people
+                   (pco_id, remote_id, first_name, last_name, middle_name, nickname,
+                    gender, birthdate, anniversary, membership, marital_status, status, raw_data, synced_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                 ON CONFLICT(pco_id) DO UPDATE SET
+                   remote_id = excluded.remote_id, first_name = excluded.first_name,
+                   last_name = excluded.last_name, middle_name = excluded.middle_name,
+                   nickname = excluded.nickname, gender = excluded.gender,
+                   birthdate = excluded.birthdate, anniversary = excluded.anniversary,
+                   membership = excluded.membership, marital_status = excluded.marital_status,
+                   status = excluded.status, raw_data = excluded.raw_data,
+                   synced_at = CURRENT_TIMESTAMP`,
+              )
+              .bind(
+                person.id, attrs.remote_id ?? null, attrs.first_name ?? null,
+                attrs.last_name ?? null, attrs.middle_name ?? null, attrs.nickname ?? null,
+                attrs.gender ?? null, attrs.birthdate ?? null, attrs.anniversary ?? null,
+                attrs.membership ?? null, attrs.marital_status ?? null, attrs.status ?? null,
+                JSON.stringify(person),
+              ),
           );
-        }
-        for (const p of phones) {
-          await insertPcoPhone(
-            c.env.DB,
-            person.id,
-            p.attributes.number,
-            p.attributes.location,
-            p.attributes.primary,
-          );
-        }
-        for (const a of addresses) {
-          await insertPcoAddress(
-            c.env.DB,
-            person.id,
-            a.attributes.street ?? null,
-            a.attributes.city ?? null,
-            a.attributes.state ?? null,
-            a.attributes.zip ?? null,
-            a.attributes.location,
-          );
+
+          for (const e of page.emailMap.get(person.id) ?? []) {
+            stmts.push(
+              c.env.DB.prepare(`INSERT INTO pco_emails (pco_id, address, location, primary_e) VALUES (?,?,?,?)`)
+                .bind(person.id, e.address, e.location, e.primary ? 1 : 0),
+            );
+          }
+          for (const p of page.phoneMap.get(person.id) ?? []) {
+            stmts.push(
+              c.env.DB.prepare(`INSERT INTO pco_phone_numbers (pco_id, number, location, primary_p) VALUES (?,?,?,?)`)
+                .bind(person.id, p.number, p.location, p.primary ? 1 : 0),
+            );
+          }
+          for (const a of page.addressMap.get(person.id) ?? []) {
+            stmts.push(
+              c.env.DB.prepare(`INSERT INTO pco_addresses (pco_id, street, city, state, zip, location) VALUES (?,?,?,?,?,?)`)
+                .bind(person.id, a.street, a.city, a.state, a.zip, a.location),
+            );
+          }
+
+          synced++;
+        } catch (err) {
+          console.error(`Failed to build statements for person ${person.id}:`, err);
+          failed++;
         }
       }
 
-      synced++;
-    } catch (err) {
-      console.error(`Failed to sync person ${person.id}:`, err);
-      failed++;
+      // Execute all inserts for this page in a single D1 batch
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < stmts.length; i += BATCH_SIZE) {
+        await c.env.DB.batch(stmts.slice(i, i + BATCH_SIZE));
+      }
+
+      if (!page.hasMore) break;
+      offset = page.nextOffset;
+
+    } else {
+      // Quick mode — people fields only, no contacts
+      let page;
+      try {
+        page = await pco.getPeoplePage(offset, perPage);
+      } catch (err) {
+        console.error(`Failed to fetch people page at offset ${offset}:`, err);
+        break;
+      }
+
+      for (const person of page.data) {
+        try {
+          await upsertPcoPerson(c.env.DB, {
+            pco_id: person.id,
+            remote_id: person.attributes.remote_id ?? null,
+            first_name: person.attributes.first_name ?? null,
+            last_name: person.attributes.last_name ?? null,
+            middle_name: person.attributes.middle_name ?? null,
+            nickname: person.attributes.nickname ?? null,
+            gender: person.attributes.gender ?? null,
+            birthdate: person.attributes.birthdate ?? null,
+            anniversary: person.attributes.anniversary ?? null,
+            membership: person.attributes.membership ?? null,
+            marital_status: person.attributes.marital_status ?? null,
+            status: person.attributes.status ?? null,
+            raw_data: JSON.stringify(person),
+          });
+          synced++;
+        } catch (err) {
+          console.error(`Failed to sync person ${person.id}:`, err);
+          failed++;
+        }
+      }
+
+      if (!page.meta.next) break;
+      offset = page.meta.next.offset;
     }
   }
 

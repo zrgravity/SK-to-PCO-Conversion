@@ -46,6 +46,75 @@ export class PcoClient {
 
   // ── People ─────────────────────────────────────────────────────────────────
 
+  /** Fetch a single page of people WITH sideloaded contact details.
+   * Uses ?include=emails,phone_numbers,addresses to get all contacts in one
+   * request per page instead of 3 extra API calls per person.
+   */
+  async getPeoplePageWithContacts(offset = 0, perPage = 100): Promise<{
+    people: PcoPerson[];
+    emailMap: Map<string, { address: string; location: string; primary: boolean }[]>;
+    phoneMap: Map<string, { number: string; location: string; primary: boolean }[]>;
+    addressMap: Map<string, { street: string | null; city: string | null; state: string | null; zip: string | null; location: string }[]>;
+    hasMore: boolean;
+    nextOffset: number;
+  }> {
+    const resp = await this.request<{
+      data: PcoPerson[];
+      included?: Array<{ type: string; id: string; attributes: Record<string, unknown> }>;
+      meta: { next?: { offset: number } };
+    }>(`/people?per_page=${perPage}&offset=${offset}&order=last_name&include=emails,phone_numbers,addresses`);
+
+    // Index included resources by their id for quick lookup
+    const includedById = new Map<string, { type: string; attributes: Record<string, unknown> }>();
+    for (const inc of resp.included ?? []) {
+      includedById.set(inc.id, { type: inc.type, attributes: inc.attributes });
+    }
+
+    const emailMap = new Map<string, { address: string; location: string; primary: boolean }[]>();
+    const phoneMap = new Map<string, { number: string; location: string; primary: boolean }[]>();
+    const addressMap = new Map<string, { street: string | null; city: string | null; state: string | null; zip: string | null; location: string }[]>();
+
+    for (const person of resp.data) {
+      const rels = (person as unknown as {
+        relationships?: Record<string, { data?: Array<{ type: string; id: string }> | { type: string; id: string } | null }>;
+      }).relationships ?? {};
+
+      const relIds = (key: string): string[] => {
+        const rel = rels[key]?.data;
+        if (!rel) return [];
+        if (Array.isArray(rel)) return rel.map((r) => r.id);
+        return [rel.id];
+      };
+
+      emailMap.set(person.id, relIds("emails").flatMap((id) => {
+        const r = includedById.get(id);
+        if (!r || r.type !== "Email") return [];
+        return [{ address: String(r.attributes.address ?? ""), location: String(r.attributes.location ?? "Home"), primary: Boolean(r.attributes.primary) }];
+      }));
+
+      phoneMap.set(person.id, relIds("phone_numbers").flatMap((id) => {
+        const r = includedById.get(id);
+        if (!r || r.type !== "PhoneNumber") return [];
+        return [{ number: String(r.attributes.number ?? ""), location: String(r.attributes.location ?? "Home"), primary: Boolean(r.attributes.primary) }];
+      }));
+
+      addressMap.set(person.id, relIds("addresses").flatMap((id) => {
+        const r = includedById.get(id);
+        if (!r || r.type !== "Address") return [];
+        return [{ street: r.attributes.street as string | null, city: r.attributes.city as string | null, state: r.attributes.state as string | null, zip: r.attributes.zip as string | null, location: String(r.attributes.location ?? "Home") }];
+      }));
+    }
+
+    return {
+      people: resp.data as PcoPerson[],
+      emailMap,
+      phoneMap,
+      addressMap,
+      hasMore: !!resp.meta.next,
+      nextOffset: resp.meta.next?.offset ?? 0,
+    };
+  }
+
   /** Fetch a single page of people. Use `getAllPeople` for full sync. */
   async getPeoplePage(
     offset = 0,

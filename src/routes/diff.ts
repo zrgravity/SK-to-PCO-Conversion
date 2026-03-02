@@ -19,9 +19,9 @@ import {
 import {
   getSkPeopleByBatch,
   getAllPcoPeople,
-  getPcoEmails,
-  getPcoPhones,
-  getPcoAddresses,
+  getAllPcoEmailsBulk,
+  getAllPcoPhonesBulk,
+  getAllPcoAddressesBulk,
   getAllPersonMatches,
   upsertPersonMatch,
   insertPendingChanges,
@@ -57,10 +57,13 @@ diffRoute.post("/:batchId", async (c) => {
   const batch = await getBatch(c.env.DB, batchId);
   if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
 
-  const [skPeople, allPco, allMatches] = await Promise.all([
+  const [skPeople, allPco, allMatches, bulkEmails, bulkPhones, bulkAddresses] = await Promise.all([
     getSkPeopleByBatch(c.env.DB, batchId),
     getAllPcoPeople(c.env.DB),
     getAllPersonMatches(c.env.DB),
+    getAllPcoEmailsBulk(c.env.DB),
+    getAllPcoPhonesBulk(c.env.DB),
+    getAllPcoAddressesBulk(c.env.DB),
   ]);
 
   if (allPco.length === 0) {
@@ -246,12 +249,10 @@ diffRoute.post("/:batchId", async (c) => {
       ...fieldChanges.map((fc) => ({ ...fc, import_batch_id: batchId })),
     );
 
-    // Contact diffs
-    const [emails, phones, addresses] = await Promise.all([
-      getPcoEmails(c.env.DB, pcoId),
-      getPcoPhones(c.env.DB, pcoId),
-      getPcoAddresses(c.env.DB, pcoId),
-    ]);
+    // Contact diffs — use pre-loaded Maps (O(1) lookup, no extra DB round trips)
+    const emails = bulkEmails.get(pcoId) ?? [];
+    const phones = bulkPhones.get(pcoId) ?? [];
+    const addresses = bulkAddresses.get(pcoId) ?? [];
 
     const emailChanges = diffEmails(
       sk,
