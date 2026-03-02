@@ -595,6 +595,30 @@ export async function bulkRejectChanges(
 }
 
 /**
+ * Bulk-approve all pending changes in a batch whose change_type is in the given set.
+ * Used by "Quick Approve" buttons (e.g. approve all contact changes at once).
+ */
+export async function bulkApproveByTypes(
+  db: D1Database,
+  batchId: string,
+  changeTypes: string[],
+  reviewedBy: string | null,
+): Promise<number> {
+  if (changeTypes.length === 0) return 0;
+  const placeholders = changeTypes.map(() => "?").join(", ");
+  const result = await db
+    .prepare(
+      `UPDATE pending_changes
+       SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+       WHERE import_batch_id = ? AND status = 'pending'
+         AND change_type IN (${placeholders})`,
+    )
+    .bind(reviewedBy, batchId, ...changeTypes)
+    .run();
+  return (result.meta as { changes?: number }).changes ?? 0;
+}
+
+/**
  * Bulk-reject all pending update_field changes in a batch for a specific field.
  * Used by the "Quick Reject" buttons in the Review UI (e.g. reject all marital_status noise).
  */

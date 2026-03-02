@@ -333,7 +333,12 @@
             <button class="btn btn-danger btn-sm"  :disabled="loading" @click="bulkAction('reject-all')">✕ Reject All Pending</button>
           </div>
         </div>
-        <div class="toolbar" style="margin-top:-0.25rem;margin-bottom:0.75rem">
+        <div class="toolbar" style="margin-top:-0.25rem;margin-bottom:0.5rem">
+          <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap">Quick Approve:</span>
+          <button class="btn btn-success btn-sm" style="background:#16a34a" :disabled="loading" @click="approveTypes(['add_phone','update_phone','add_email','update_email','add_address','update_address'])">✓ All Contact Changes</button>
+          <button class="btn btn-success btn-sm" style="background:#16a34a" :disabled="loading" @click="approveTypes(['create_person'])">✓ All New People</button>
+        </div>
+        <div class="toolbar" style="margin-top:0;margin-bottom:0.75rem">
           <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap">Quick Reject:</span>
           <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('marital_status')">✕ marital_status</button>
           <button class="btn btn-ghost btn-sm" :disabled="loading" @click="rejectField('membership')">✕ membership</button>
@@ -635,6 +640,23 @@
         } catch(e) { this.msg(e.message, 'error'); }
       },
 
+      async approveTypes(types) {
+        if (!this.batchId) return;
+        this.loading = true;
+        try {
+          const res = await fetch(`/api/review/batch/${this.batchId}/approve-types`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ types }),
+          });
+          const json = await res.json();
+          if (!json.ok) throw new Error(json.error ?? 'Server error');
+          this.msg(`Approved ${json.data.approved} changes`, 'ok', 3000);
+          await this.loadChanges();
+        } catch(e) { this.msg(e.message, 'error'); }
+        finally { this.loading = false; }
+      },
+
       async rejectField(fieldName) {
         if (!this.batchId) return;
         this.loading = true;
@@ -719,7 +741,10 @@
           if (val && typeof val === 'object') {
             // Address object: { street, city, state, zip }
             if ('street' in val || 'city' in val) {
-              return [val.street, val.city, val.state, val.zip].filter(Boolean).join(', ');
+              // Suppress stub streets: PCO sometimes stores a bare row-ID number
+              // (e.g. "1504") instead of a real street — treat those as blank.
+              const street = /^\d{1,6}$/.test((val.street ?? '').trim()) ? null : val.street;
+              return [street, val.city, val.state, val.zip].filter(Boolean).join(', ');
             }
             return JSON.stringify(val);
           }

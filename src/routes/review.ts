@@ -14,6 +14,7 @@ import {
   bulkApproveChanges,
   bulkRejectChanges,
   bulkRejectByField,
+  bulkApproveByTypes,
   getBatch,
 } from "../db/queries";
 import type { Env } from "../types";
@@ -75,6 +76,19 @@ reviewRoute.post("/batch/:batchId/approve-all", async (c) => {
   if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
   await bulkApproveChanges(c.env.DB, batchId, getUserEmail(c));
   return c.json({ ok: true, data: { batch_id: batchId, action: "approve-all" } });
+});
+
+/** Bulk-approve all pending changes of the given types (body: { types: string[] }) */
+reviewRoute.post("/batch/:batchId/approve-types", async (c) => {
+  const batchId = c.req.param("batchId");
+  const batch = await getBatch(c.env.DB, batchId);
+  if (!batch) return c.json({ ok: false, error: "Batch not found" }, 404);
+  const body = await c.req.json<{ types: string[] }>();
+  if (!Array.isArray(body.types) || body.types.length === 0) {
+    return c.json({ ok: false, error: "types array is required" }, 400);
+  }
+  const approved = await bulkApproveByTypes(c.env.DB, batchId, body.types, getUserEmail(c));
+  return c.json({ ok: true, data: { batch_id: batchId, approved } });
 });
 
 /** Bulk-reject all pending changes in a batch */
