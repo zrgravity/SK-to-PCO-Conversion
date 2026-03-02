@@ -678,7 +678,17 @@
 
       displayValue(json) {
         if (!json || json === 'null') return '';
-        try { return JSON.parse(json); } catch { return json; }
+        try {
+          const val = JSON.parse(json);
+          if (val && typeof val === 'object') {
+            // Address object: { street, city, state, zip }
+            if ('street' in val || 'city' in val) {
+              return [val.street, val.city, val.state, val.zip].filter(Boolean).join(', ');
+            }
+            return JSON.stringify(val);
+          }
+          return val;
+        } catch { return json; }
       },
 
       createPersonSummary(json) {

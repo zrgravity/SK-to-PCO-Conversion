@@ -33,9 +33,16 @@ function normEmail(s: string | null | undefined): string {
 
 // ── Field-level diff ──────────────────────────────────────────────────────────
 
+/** Normalise a name for comparison: lowercase, trim, collapse whitespace. */
+function normName(s: string | null | undefined): string {
+  return (s ?? "").toLowerCase().trim().replace(/\s+/g, " ");
+}
+
 /**
  * Produce field-level update_field changes between SK and a PCO snapshot.
  * Only emits a change when the SK value is non-empty AND differs from PCO.
+ * Name fields (first/last/middle) are compared case-insensitively so that
+ * SK ALL-CAPS values don't generate noise changes against PCO title-case.
  */
 export function diffPersonFields(
   sk: SkPerson,
@@ -58,9 +65,16 @@ export function diffPersonFields(
     { field: "marital_status", skVal: sk.marital_status,   pcoVal: pco.marital_status },
   ];
 
+  const NAME_FIELDS = new Set(["first_name", "last_name", "middle_name", "nickname"]);
+
   for (const { field, skVal, pcoVal } of fields) {
     if (!skVal) continue;  // don't overwrite PCO with blank
-    if (skVal === pcoVal) continue;
+    // Name fields: compare case-insensitively (SK stores ALL CAPS, PCO stores Title Case)
+    if (NAME_FIELDS.has(field)) {
+      if (normName(skVal) === normName(pcoVal)) continue;
+    } else {
+      if (skVal === pcoVal) continue;
+    }
     changes.push({
       sk_individual_id: sk.sk_individual_id,
       pco_person_id: pco.pco_id,
@@ -216,11 +230,12 @@ export function diffAddresses(
   };
 
   if (homeAddr) {
+    const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().trim();
     const same =
-      (homeAddr.street ?? "") === skAddr.street &&
-      (homeAddr.city ?? "") === skAddr.city &&
-      (homeAddr.state ?? "") === skAddr.state &&
-      (homeAddr.zip ?? "") === skAddr.zip;
+      norm(homeAddr.street) === norm(skAddr.street) &&
+      norm(homeAddr.city)   === norm(skAddr.city)   &&
+      norm(homeAddr.state)  === norm(skAddr.state)  &&
+      norm(homeAddr.zip)    === norm(skAddr.zip);
     if (!same) {
       changes.push({
         sk_individual_id: sk.sk_individual_id,
