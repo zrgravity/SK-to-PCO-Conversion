@@ -7,7 +7,9 @@ import type { SkRawRow, SkPerson } from "./types";
  * header row. Works in both the Worker runtime and Node.js / Vitest.
  */
 export function parseCsv(text: string): SkRawRow[] {
-  const lines = tokeniseCsv(text);
+  // Strip UTF-8 BOM added by Excel / Windows CSV exports
+  const stripped = text.replace(/^\uFEFF/, "");
+  const lines = tokeniseCsv(stripped);
   if (lines.length < 2) return [];
 
   const headers = lines[0];
