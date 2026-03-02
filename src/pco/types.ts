@@ -10,7 +10,7 @@ export interface PcoApiMeta {
   parent?: { id: string; type: string };
 }
 
-export interface PcoResource<T extends Record<string, unknown> = Record<string, unknown>> {
+export interface PcoResource<T = Record<string, unknown>> {
   type: string;
   id: string;
   attributes: T;
@@ -18,16 +18,16 @@ export interface PcoResource<T extends Record<string, unknown> = Record<string, 
   links?: Record<string, string>;
 }
 
-export interface PcoListResponse<T extends Record<string, unknown>> {
+export interface PcoListResponse<T> {
   data: PcoResource<T>[];
-  included?: PcoResource<unknown>[];
+  included?: PcoResource<Record<string, unknown>>[];
   meta: PcoApiMeta;
   links: Record<string, string>;
 }
 
-export interface PcoSingleResponse<T extends Record<string, unknown>> {
+export interface PcoSingleResponse<T> {
   data: PcoResource<T>;
-  included?: PcoResource<unknown>[];
+  included?: PcoResource<Record<string, unknown>>[];
 }
 
 // ── Person attributes ─────────────────────────────────────────────────────────

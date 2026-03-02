@@ -1,10 +1,19 @@
+import { SK_COLUMNS } from "./types";
 import type { SkRawRow, SkPerson } from "./types";
+
+// Build a lowercase → canonical header lookup once at module load
+const SK_COLUMN_MAP = new Map<string, string>(
+  SK_COLUMNS.map((col) => [col.toLowerCase().trim(), col]),
+);
 
 // ── CSV tokeniser ─────────────────────────────────────────────────────────────
 
 /**
  * RFC 4180-compliant CSV parser. Returns an array of objects keyed by the
  * header row. Works in both the Worker runtime and Node.js / Vitest.
+ *
+ * Headers are normalised case-insensitively against the canonical SK_COLUMNS
+ * list so that exports with different capitalisation still parse correctly.
  */
 export function parseCsv(text: string): SkRawRow[] {
   // Strip UTF-8 BOM added by Excel / Windows CSV exports
@@ -12,7 +21,12 @@ export function parseCsv(text: string): SkRawRow[] {
   const lines = tokeniseCsv(stripped);
   if (lines.length < 2) return [];
 
-  const headers = lines[0];
+  // Normalise each header to its canonical SK column name (case-insensitive)
+  const headers = lines[0].map((h) => {
+    const key = h.trim().toLowerCase();
+    return SK_COLUMN_MAP.get(key) ?? h.trim();
+  });
+
   const rows: SkRawRow[] = [];
 
   for (let i = 1; i < lines.length; i++) {
@@ -20,11 +34,22 @@ export function parseCsv(text: string): SkRawRow[] {
     if (cells.every((c) => c.trim() === "")) continue; // skip blank rows
     const row: Record<string, string> = {};
     headers.forEach((h, idx) => {
-      row[h.trim()] = cells[idx] ?? "";
+      row[h] = cells[idx] ?? "";
     });
     rows.push(row as SkRawRow);
   }
   return rows;
+}
+
+/**
+ * Returns the header row from a CSV text (after BOM stripping and normalisation).
+ * Used for diagnostics when parsing fails.
+ */
+export function detectCsvHeaders(text: string): string[] {
+  const stripped = text.replace(/^\uFEFF/, "");
+  const lines = tokeniseCsv(stripped);
+  if (lines.length === 0) return [];
+  return lines[0].map((h) => h.trim());
 }
 
 /** Splits a CSV text into a 2-D array of strings (handles quoted fields). */

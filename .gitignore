@@ -90,3 +90,5 @@ ENV/
 *.csv
 ~$*
 .dev.vars
+.wrangler/
+node_modules/

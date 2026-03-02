@@ -22,13 +22,14 @@ describe("parseCsv", () => {
   it("handles quoted fields with commas", () => {
     const csv = `Name,Address\n"Smith, John","123 Main St, Apt 4"`;
     const rows = parseCsv(csv);
-    expect(rows[0]).toMatchObject({ Name: "Smith, John", Address: "123 Main St, Apt 4" });
+    const r = rows[0] as Record<string, string>;
+    expect(r).toMatchObject({ Name: "Smith, John", Address: "123 Main St, Apt 4" });
   });
 
   it("handles escaped quotes inside quoted fields", () => {
     const csv = `Name\n"He said ""hello"""`; 
     const rows = parseCsv(csv);
-    expect(rows[0].Name).toBe(`He said "hello"`);
+    expect((rows[0] as Record<string, string>).Name).toBe(`He said "hello"`);
   });
 
   it("returns empty array for header-only CSV", () => {

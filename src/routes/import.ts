@@ -5,7 +5,7 @@
  */
 
 import { Hono } from "hono";
-import { parseSkExport } from "../sk/parser";
+import { parseSkExport, detectCsvHeaders } from "../sk/parser";
 import {
   createImportBatch,
   insertSkPeople,
@@ -29,6 +29,22 @@ importRoute.get("/:batchId", async (c) => {
   return c.json({ ok: true, data: batch });
 });
 
+/** Decode a File/Blob buffer handling UTF-16 LE/BE and UTF-8 BOMs (SK exports from Windows). */
+async function decodeCsvFile(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer, 0, 4);
+  if (bytes[0] === 0xFF && bytes[1] === 0xFE) {
+    // UTF-16 LE BOM — common from SK Windows export / Excel "Save As CSV UTF-16"
+    return new TextDecoder("utf-16le").decode(buffer);
+  }
+  if (bytes[0] === 0xFE && bytes[1] === 0xFF) {
+    // UTF-16 BE BOM
+    return new TextDecoder("utf-16be").decode(buffer);
+  }
+  // UTF-8 (parser already strips UTF-8 BOM \uFEFF)
+  return new TextDecoder("utf-8").decode(buffer);
+}
+
 /** POST /api/import — upload a SK CSV file */
 importRoute.post("/", async (c) => {
   const userEmail = c.req.header("CF-Access-Authenticated-User-Email") ?? null;
@@ -44,7 +60,7 @@ importRoute.post("/", async (c) => {
       return c.json({ ok: false, error: "No file provided in form field 'file'" }, 400);
     }
     filename = (file as File).name || filename;
-    csvText = await (file as File).text();
+    csvText = await decodeCsvFile(file as File);
   } else {
     // Fallback: raw CSV body
     csvText = await c.req.text();
@@ -57,10 +73,12 @@ importRoute.post("/", async (c) => {
   const { people, skipped, errors } = parseSkExport(csvText);
 
   if (people.length === 0) {
+    const detectedHeaders = detectCsvHeaders(csvText);
     return c.json(
       {
         ok: false,
         error: "No valid records found. Ensure the CSV has an 'Individual ID' column.",
+        detected_headers: detectedHeaders,
         parse_errors: errors,
       },
       422,

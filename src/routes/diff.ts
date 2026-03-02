@@ -154,7 +154,7 @@ diffRoute.post("/:batchId", async (c) => {
   for (const sk of skPersonObjects) {
     const matchResult = autoMatched.get(sk.sk_individual_id);
 
-    if (!matchResult || matchResult.kind === "new") {
+    if (!matchResult || matchResult.kind === "new" || matchResult.kind === "unresolved") {
       // New person — propose creation + contact fields
       proposedChanges.push({
         ...createPersonChange(sk),

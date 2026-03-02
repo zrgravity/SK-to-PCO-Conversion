@@ -47,6 +47,7 @@ function makePco(overrides: Partial<PcoPersonRow & { emails?: string[] }> = {}):
     birthdate: "1975-05-15",
     anniversary: null,
     membership: "Member",
+    marital_status: null,
     status: "active",
     raw_data: "{}",
     synced_at: new Date().toISOString(),
